@@ -1,0 +1,25 @@
+{
+  "origin": "https://www.leparisien.fr",
+  "sitemapUrl": "https://www.leparisien.fr/arc/outboundfeeds/sitemapnews/?outputType=xml&from=",
+  "sitemapPages": [0, 100, 200, 300, 400, 500, 600, 700, 800],
+  "articlesLagDays": 2,
+  "articlesSampleSize": 80,
+  "pages": [
+    { "id": "homepage", "label": "Homepage", "url": "https://www.leparisien.fr/", "formFactors": ["PHONE"] },
+    { "id": "eco", "label": "Rubrique Éco", "url": "https://www.leparisien.fr/economie/", "formFactors": ["PHONE"] },
+    { "id": "sports", "label": "Rubrique Sports", "url": "https://www.leparisien.fr/sports/", "formFactors": ["PHONE"] },
+    { "id": "foot", "label": "Rubrique Foot", "url": "https://www.leparisien.fr/sports/football/", "formFactors": ["PHONE"] },
+    { "id": "politique", "label": "Rubrique Politique", "url": "https://www.leparisien.fr/politique/", "formFactors": ["PHONE"] },
+    { "id": "faits-divers", "label": "Rubrique Faits divers", "url": "https://www.leparisien.fr/faits-divers/", "formFactors": ["PHONE"] },
+    { "id": "etudiant", "label": "Étudiant — page rubrique", "url": "https://www.leparisien.fr/etudiant/", "formFactors": ["PHONE"] },
+    { "id": "jardin", "label": "Jardin — page rubrique", "url": "https://www.leparisien.fr/jardin/", "formFactors": ["PHONE"] },
+    { "id": "environnement", "label": "Rubrique Environnement", "url": "https://www.leparisien.fr/environnement/", "formFactors": ["PHONE"] }
+  ],
+  "articleGroups": [
+    { "id": "all", "label": "Tous articles", "prefix": "" },
+    { "id": "etudiant", "label": "Étudiant", "prefix": "/etudiant/" },
+    { "id": "sports", "label": "Sports", "prefix": "/sports/" },
+    { "id": "faits-divers", "label": "Faits divers", "prefix": "/faits-divers/" },
+    { "id": "environnement", "label": "Environnement", "prefix": "/environnement/" }
+  ]
+}

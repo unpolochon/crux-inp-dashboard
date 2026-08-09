@@ -1,0 +1,8 @@
+{
+  "name": "crux-dashboard",
+  "type": "module",
+  "scripts": {
+    "collect": "node --env-file=.env collect.js",
+    "serve": "node --env-file=.env server.js"
+  }
+}
