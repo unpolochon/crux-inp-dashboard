@@ -32,6 +32,15 @@
   .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; }
   .panel { border: 1px solid var(--line); border-radius: 3px; padding: 10px; background: var(--panel); }
   svg text { fill: var(--muted); font-size: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 5px 8px;
+       border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 5px 8px; border-bottom: 1px solid var(--line); }
+  tbody tr:hover { background: #1f2327; }
+  td.num { text-align: right; white-space: nowrap; }
+  td.inp { text-align: right; font-weight: 500; color: #fff; }
+  td a { color: var(--text); text-decoration: none; }
+  td a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -89,15 +98,32 @@ function chart(series, m) {
   </svg></div>`;
 }
 
+// Tableau des articles J-2 triés par INP décroissant (les pires en tête).
+function table(rows, m) {
+  if (!rows?.length) return '<div class="panel sub">pas d’articles avec données CrUX</div>';
+  const p = (v) => (v == null ? '—' : (v * 100).toFixed(0) + ' %');
+  const day = (s) => (s ? s.slice(0, 10).split('-').reverse().join('/') : '—');
+  const tr = (a) => `<tr>
+    <td><a href="${a.url}" target="_blank" rel="noopener">${a.title ?? a.url}</a></td>
+    <td class="inp" style="background:${color(m, a.p75)}">${Math.round(a.p75)}</td>
+    <td class="num">${p(a.good)}</td><td class="num">${p(a.ni)}</td><td class="num">${p(a.poor)}</td>
+    <td class="num">${day(a.published)}</td></tr>`;
+  return `<div class="panel"><table>
+    <thead><tr><th>Article</th><th style="text-align:right">INP p75 (mobile)</th>
+      <th style="text-align:right">% Good</th><th style="text-align:right">% NI</th>
+      <th style="text-align:right">% Poor</th><th style="text-align:right">Publié le</th></tr></thead>
+    <tbody>${rows.map(tr).join('')}</tbody></table></div>`;
+}
+
 function render() {
   const m = METRIC, key = m.key;
   const o = d.origins, g = d.articleGroups.find((x) => x.id === 'all');
   const cards = [
     stat(`${m.label} global mobile (origine)`, m, o.PHONE?.[key]?.p75),
-    stat(`${m.label} moyen articles J-2 (n=${g?.metrics[key]?.samples ?? 0})`, m, g?.metrics[key]?.p75),
+    stat(`${m.label} p75 articles J-2 (n=${g?.metrics[key]?.samples ?? 0})`, m, g?.metrics[key]?.p75),
     ...d.pages.map((p) => stat(`${p.label} — mobile`, m, p.metrics?.[key]?.p75)),
     ...d.articleGroups.filter((x) => x.id !== 'all')
-      .map((x) => stat(`Articles ${x.label} — moyen (n=${x.metrics[key]?.samples ?? 0})`, m, x.metrics[key]?.p75)),
+      .map((x) => stat(`Articles ${x.label} — p75 (n=${x.metrics[key]?.samples ?? 0})`, m, x.metrics[key]?.p75)),
   ];
 
   document.getElementById('view').innerHTML = `
@@ -113,7 +139,9 @@ function render() {
         <span><i style="background:var(--poor)"></i>Poor</span></div>
     </div>
     <h2>Historique p75 — origine mobile (relevés hebdo, 28 j glissants)</h2>
-    ${chart(d.history.PHONE?.[key] ?? [], m) || '<div class="panel sub">pas d’historique</div>'}`;
+    ${chart(d.history.PHONE?.[key] ?? [], m) || '<div class="panel sub">pas d’historique</div>'}
+    <h2>Articles J-2 — INP p75 par article (${d.articles?.length ?? 0} avec données CrUX, pires en tête)</h2>
+    ${table(d.articles, m)}`;
 }
 
 document.getElementById('meta').textContent =

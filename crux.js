@@ -6,7 +6,7 @@ if (!KEY) throw new Error('CRUX_API_KEY manquante');
 // ponytail: on ne suit plus que l'INP mobile, cf. demande utilisateur.
 const METRICS = ['interaction_to_next_paint'];
 
-async function post(endpoint, body) {
+async function post(endpoint, body, attempt = 0) {
   const r = await fetch(`${API}:${endpoint}?key=${KEY}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -16,6 +16,11 @@ async function post(endpoint, body) {
   if (j.error) {
     // 404 = pas assez de trafic pour cette URL, cas normal et fréquent.
     if (j.error.code === 404) return null;
+    // 429 = quota 150 req/min dépassé (plan gratuit) ; on retente après une pause plutôt que d'échouer la collecte.
+    if (j.error.code === 429 && attempt < 5) {
+      await new Promise((res) => setTimeout(res, 12000));
+      return post(endpoint, body, attempt + 1);
+    }
     throw new Error(`CrUX ${j.error.code}: ${j.error.message}`);
   }
   return j.record;
@@ -94,10 +99,18 @@ export async function fetchArticles(cfg, lagDays) {
         .catch(() => '')
     )
   );
-  const all = new Set();
+  // Titre + date de publication viennent du sitemap news : évite un fetch HTML par article.
+  const meta = new Map();
   for (const xml of pages) {
-    for (const m of xml.matchAll(/<loc>([^<]+)<\/loc>/g)) all.add(m[1]);
+    for (const m of xml.matchAll(/<url>([\s\S]*?)<\/url>/g)) {
+      const loc = m[1].match(/<loc>([^<]+)<\/loc>/)?.[1];
+      if (!loc) continue;
+      meta.set(loc, {
+        title: m[1].match(/<news:title><!\[CDATA\[([\s\S]*?)\]\]><\/news:title>/)?.[1]?.trim() ?? loc,
+        published: m[1].match(/<news:publication_date>([^<]+)</)?.[1] ?? null,
+      });
+    }
   }
-  const urls = [...all];
-  return { date: stamp, urls: urls.filter((u) => u.includes(stamp)), allUrls: urls };
+  const urls = [...meta.keys()];
+  return { date: stamp, urls: urls.filter((u) => u.includes(stamp)), allUrls: urls, meta };
 }
