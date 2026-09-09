@@ -87,6 +87,7 @@ for (const g of cfg.articleGroups) {
 const articles = [...byUrl.values()].sort((a, b) => b.p75 - a.p75);
 
 const rumDates = [];
+let rumElements = [];
 const rumEnabled = cfg.rum?.enabled !== false && !process.argv.includes('--no-rum');
 if (rumEnabled && process.env.SPEEDCURVE_API_KEY) {
   log('→ attribution INP SpeedCurve RUM…');
@@ -139,6 +140,21 @@ if (rumEnabled && process.env.SPEEDCURVE_API_KEY) {
   }
   log(`   terrain: ${pages.filter((p) => p.rum).length}/${pages.length} rubriques, ` +
       `${articleGroups.filter((g) => g.rum).length}/${articleGroups.length} groupes d'articles`);
+
+  // Top des elements responsables de l'INP, tous pathnames confondus : la liste de ce qu'il faut
+  // corriger en premier. Trie par nombre d'interactions au-dessus du seuil "bon" (200 ms), pas par
+  // volume brut : un element tres sollicite mais rapide n'est pas un probleme a corriger.
+  const withSelector = records.filter((view) => view.selector);
+  rumElements = [...aggregateRum(withSelector, (view) => view.selector)]
+    .map(([selector, { elements: _nested, ...agg }]) => ({
+      selector,
+      ...agg,
+      slow: Math.round(agg.n * (agg.ni + agg.poor)),
+    }))
+    .sort((a, b) => b.slow - a.slow || b.inpP75 - a.inpP75 || a.selector.localeCompare(b.selector))
+    .slice(0, 20);
+  log(`   ${rumElements.length} elements en tete d'attribution ` +
+      `(sur ${new Set(withSelector.map((view) => view.selector)).size} selecteurs distincts)`);
 } else {
   log(`→ attribution INP SpeedCurve ignorée (${rumEnabled ? 'clé absente' : 'désactivée'})`);
 }
@@ -156,6 +172,7 @@ writeFileSync(
       articleGroups,
       articles,
       rumDates,
+      rumElements,
     },
     null,
     2

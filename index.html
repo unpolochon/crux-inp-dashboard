@@ -82,6 +82,10 @@
   }
   .chart-tooltip strong { color: #fff; }
   .chart-tooltip span { color: var(--muted); margin-left: 6px; }
+  .top-elements { table-layout: fixed; font-size: 12px; }
+  .top-elements th, .top-elements td { padding: 5px 6px; }
+  .top-elements th:not(:first-child), .top-elements td:not(:first-child) { width: 96px; text-align: right; }
+  .top-elements td.slow { color: #fff; font-weight: 500; }
   @media (max-width: 620px) {
     body { padding: 10px; }
     .panel { padding: 6px; }
@@ -97,6 +101,9 @@
     .phase-bar span { font-size: 9px; }
     .elements-table th:nth-child(2), .elements-table td:nth-child(2) { width: 44px; }
     .elements-table th:nth-child(3), .elements-table td:nth-child(3) { width: 68px; }
+    .top-elements { font-size: 11px; }
+    .top-elements th, .top-elements td { padding: 5px 4px; }
+    .top-elements th:not(:first-child), .top-elements td:not(:first-child) { width: 62px; }
   }
 </style>
 </head>
@@ -291,6 +298,20 @@ function render() {
     }
   }
 
+  // Top attribution : quel element est le plus souvent responsable d'un INP au-dessus de 200 ms.
+  const topElements = d.rumElements?.length ? `
+    <h2>Éléments les plus attribués à l’INP — terrain SpeedCurve (${rumWindow})</h2>
+    <div class="sub grid-label">Sélecteur de l’élément interagi, toutes pages confondues.
+      Trié par nombre d’interactions au-dessus du seuil « bon » (200 ms).</div>
+    <div class="panel"><table class="top-elements">
+      <thead><tr><th>Sélecteur</th><th>Vues</th><th>&gt; 200 ms</th><th>INP p75</th></tr></thead>
+      <tbody>${d.rumElements.map((element) => `<tr>
+        <td class="selector" title="${esc(element.selector)}">${esc(element.selector)}</td>
+        <td>${element.n.toLocaleString('fr-FR')}</td>
+        <td class="slow">${element.slow.toLocaleString('fr-FR')}</td>
+        <td style="color:${color(m, element.inpP75)}">${element.inpP75} ms</td></tr>`).join('')}</tbody>
+    </table></div>` : '';
+
   const legend = `<div class="legend"><span><i style="background:var(--good)"></i>Good</span>
     <span><i style="background:var(--ni)"></i>Needs improvement</span>
     <span><i style="background:var(--poor)"></i>Poor</span></div>`;
@@ -321,6 +342,7 @@ function render() {
       ${d.articleGroups.map((x) => rumDistro(`Articles ${x.label}`, x.rum)).join('')}
       ${legend}
     </div>` : ''}
+    ${topElements}
     <h2>Historique p75 — origine mobile (relevés hebdo, 28 j glissants)</h2>
     ${chart(histSeries, m) || '<div class="panel sub">pas d\'historique</div>'}
     <h2>Articles — INP p75 par article (${d.articles?.length ?? 0} avec données CrUX, pires en tête)</h2>
