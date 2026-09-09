@@ -17,19 +17,22 @@
   h2 { font-size: 15px; margin: 28px 0 10px; font-weight: 500; }
   .sub { color: var(--muted); font-size: 12px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
-  .stat { border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+  .stat { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 3px;
+          overflow: hidden; }
   .stat header { background: var(--panel); padding: 5px 8px; font-size: 11px; color: var(--muted);
                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .stat .val { padding: 18px 8px; text-align: center; font-size: 38px; font-weight: 500; color: #fff;
-               text-shadow: 0 1px 2px rgba(0,0,0,.35); }
+  .stat .val { flex: 1; align-content: center; padding: 18px 8px; text-align: center; font-size: 38px;
+               font-weight: 500; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.35); }
   .stat .val small { font-size: 15px; opacity: .8; margin-left: 3px; }
-  .stat.empty .val { background: var(--panel); color: var(--muted); font-size: 15px; padding: 29px 8px; }
+  .stat.empty .val { background: var(--panel); color: var(--muted); font-size: 15px; }
   .bar { display: flex; height: 26px; border-radius: 3px; overflow: hidden; border: 1px solid var(--line); }
   .bar span { display: flex; align-items: center; justify-content: center; font-size: 11px; color: #000; }
   .row { display: grid; grid-template-columns: 190px 1fr; gap: 10px; align-items: center; margin-bottom: 6px; }
   .row > .lbl { font-size: 12px; color: var(--muted); text-align: right; }
   .legend { display: flex; gap: 14px; font-size: 11px; color: var(--muted); margin-top: 8px; }
   .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; }
+  .grid-label { margin: 0 0 6px; }
+  .grid + .grid-label { margin-top: 14px; }
   .panel { border: 1px solid var(--line); border-radius: 3px; padding: 10px; background: var(--panel); }
   svg text { fill: var(--muted); font-size: 10px; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -72,6 +75,13 @@
   .elements-table th:nth-child(2), .elements-table td:nth-child(2) { width: 74px; text-align: right; }
   .elements-table th:nth-child(3), .elements-table td:nth-child(3) { width: 92px; text-align: right; }
   .selector { overflow-wrap: anywhere; color: #b9bdc2; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .chart-tooltip {
+    position: absolute; pointer-events: none; background: #1f2327; border: 1px solid #3a3f44;
+    border-radius: 3px; padding: 4px 8px; font-size: 11px; white-space: nowrap; z-index: 10;
+    transform: translate(-50%, -100%); margin-top: -8px;
+  }
+  .chart-tooltip strong { color: #fff; }
+  .chart-tooltip span { color: var(--muted); margin-left: 6px; }
   @media (max-width: 620px) {
     body { padding: 10px; }
     .panel { padding: 6px; }
@@ -107,8 +117,8 @@ const pct = (v) => (v == null ? 0 : v * 100);
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
 
-const stat = (title, m, v) => v == null
-  ? `<div class="stat empty"><header>${title}</header><div class="val">pas de données CrUX</div></div>`
+const stat = (title, m, v, empty = 'pas de données CrUX') => v == null
+  ? `<div class="stat empty"><header>${title}</header><div class="val">${empty}</div></div>`
   : `<div class="stat"><header>${title}</header>
        <div class="val" style="background:${color(m, v)}">${fmt(m, v)}${m.unit ? `<small>${m.unit}</small>` : ''}</div></div>`;
 
@@ -119,6 +129,8 @@ const distro = (label, x) => {
   return `<div class="row"><div class="lbl">${label}</div><div class="bar">
     ${seg(x.good, 'var(--good)')}${seg(x.ni, 'var(--ni)')}${seg(x.poor, 'var(--poor)')}</div></div>`;
 };
+
+let _chartPts = null, _chartMetric = null, _chartGeom = null;
 
 // Sparkline p75 sur les 25 derniers relevés hebdo de l'API history.
 function chart(series, m) {
@@ -142,9 +154,54 @@ function chart(series, m) {
   const labels = pts.map((p, i) => (i % 4 === 0 || i === pts.length - 1)
     ? `<text x="${x(i)}" y="${H - 5}" text-anchor="middle">${p.date.slice(5)}</text>` : '').join('');
   const dots = pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.p75)}" r="2.5" fill="${color(m, p.p75)}"/>`).join('');
-  return `<div class="panel"><svg viewBox="0 0 ${W} ${H}" width="100%">
+  _chartPts = pts.map((p, i) => ({ ...p, sx: x(i), sy: y(p.p75) }));
+  _chartMetric = m;
+  _chartGeom = { W, H, P };
+  return `<div class="panel chart-panel" style="position:relative"><svg viewBox="0 0 ${W} ${H}" width="100%" class="chart-svg">
     ${thr}${ticks}<path d="${line}" fill="none" stroke="#8ab8ff" stroke-width="1.8"/>${dots}${labels}
-  </svg></div>`;
+    <g class="chart-hover" opacity="0" pointer-events="none">
+      <line class="chart-guide" x1="0" y1="${P}" x2="0" y2="${H - 22}" stroke="#8ab8ff" stroke-width="1" stroke-dasharray="3 2"/>
+      <circle class="chart-hl" cx="0" cy="0" r="5" fill="#8ab8ff" stroke="#111217" stroke-width="2"/>
+    </g>
+    <rect class="chart-overlay" x="${P}" y="0" width="${W - P - 26}" height="${H}" fill="transparent" style="cursor:crosshair"/>
+  </svg><div class="chart-tooltip" style="display:none"></div></div>`;
+}
+
+function setupChartHover() {
+  const panel = document.querySelector('.chart-panel');
+  const svg = document.querySelector('.chart-svg');
+  if (!svg || !_chartPts) return;
+  const { W, H } = _chartGeom;
+  const m = _chartMetric;
+  const hover = svg.querySelector('.chart-hover');
+  const guide = svg.querySelector('.chart-guide');
+  const hl = svg.querySelector('.chart-hl');
+  const tooltip = panel.querySelector('.chart-tooltip');
+
+  svg.addEventListener('mousemove', (e) => {
+    const rect = svg.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left) / rect.width) * W;
+    let nearest = 0, minDist = Infinity;
+    for (let i = 0; i < _chartPts.length; i++) {
+      const dist = Math.abs(_chartPts[i].sx - mx);
+      if (dist < minDist) { minDist = dist; nearest = i; }
+    }
+    const p = _chartPts[nearest];
+    guide.setAttribute('x1', p.sx); guide.setAttribute('x2', p.sx);
+    hl.setAttribute('cx', p.sx); hl.setAttribute('cy', p.sy);
+    hover.setAttribute('opacity', '1');
+    const tx = (p.sx / W) * rect.width;
+    const ty = (p.sy / H) * rect.height;
+    tooltip.style.display = 'block';
+    tooltip.style.left = tx + 'px';
+    tooltip.style.top = ty + 'px';
+    tooltip.innerHTML = `<strong>${fmt(m, p.p75)}${m.unit ? ' ' + m.unit : ''}</strong><span>${p.date}</span>`;
+  });
+
+  svg.addEventListener('mouseleave', () => {
+    hover.setAttribute('opacity', '0');
+    tooltip.style.display = 'none';
+  });
 }
 
 // Tableau des articles J-2 triés par INP décroissant (les pires en tête).
@@ -202,25 +259,73 @@ function render() {
   const p75Cards = d.articleGroups.map((x) =>
     stat(`${p75Label(x)} (n=${x.metrics[key]?.samples ?? 0})`, m, x.metrics[key]?.p75));
 
+  // Vue terrain SpeedCurve : mêmes périmètres que les deux rangées CrUX, mais mesure réelle
+  // sur les pages vues des jours collectés. n = nombre de pages vues avec un INP.
+  const rumWindow = d.rumDates?.length
+    ? d.rumDates.map((date) => `${date.slice(6, 8)}/${date.slice(4, 6)}`).join(' + ')
+    : '';
+  // Sous ce seuil un p75 n'est pas stable : on affiche la valeur pour information, mais en carte
+  // neutre plutôt qu'en vert franc, sinon 99 ms sur 6 pages vues se lit comme un bon score.
+  const RUM_MIN_VIEWS = 50;
+  const rumSolid = (x) => x?.inpP75 != null && x.n >= RUM_MIN_VIEWS;
+  const rumCard = (title, x) => {
+    const label = `${title} (n=${(x?.n ?? 0).toLocaleString('fr-FR')})`;
+    if (rumSolid(x)) return stat(label, m, x.inpP75);
+    return stat(label, m, null,
+      x?.inpP75 == null ? 'pas de données terrain' : `${x.inpP75} ms · échantillon trop faible`);
+  };
+  const rumPageCards = d.pages.map((p) => rumCard(p.label, p.rum));
+  const rumGroupCards = d.articleGroups.map((x) => rumCard(`Articles ${x.label}`, x.rum));
+  // Une distribution calculée sur quelques pages vues n'a pas de sens : même seuil que les cartes.
+  const rumDistro = (label, x) => (rumSolid(x) ? distro(label, x) : '');
+
+  // Ajoute le p75 courant (queryRecord) en dernier point : sinon le graphe ne montre
+  // que l'historique CrUX qui prend ~7 j de retard sur la mesure actuelle.
+  const histSeries = [...(d.history.PHONE?.[key] ?? [])];
+  const curP75 = o.PHONE?.[key]?.p75;
+  if (curP75 != null) {
+    const today = d.collectedAt.slice(0, 10);
+    if (histSeries[histSeries.length - 1]?.date !== today) {
+      histSeries.push({ date: today, p75: curP75,
+        good: o.PHONE?.[key]?.good, ni: o.PHONE?.[key]?.ni, poor: o.PHONE?.[key]?.poor });
+    }
+  }
+
+  const legend = `<div class="legend"><span><i style="background:var(--good)"></i>Good</span>
+    <span><i style="background:var(--ni)"></i>Needs improvement</span>
+    <span><i style="background:var(--poor)"></i>Poor</span></div>`;
+
   document.getElementById('view').innerHTML = `
     <div class="sub" style="margin-bottom:10px">${m.desc}</div>
     <h2>Vue globale — mesure CrUX directe par page</h2>
     <div class="grid">${globalCards.join('')}</div>
     <h2>Vue p75 — agrégat des articles par rubrique</h2>
     <div class="grid">${p75Cards.join('')}</div>
-    <h2>Distribution Good / NI / Poor</h2>
+    ${d.rumDates?.length ? `
+    <h2>Vue terrain SpeedCurve — INP p75 des pages vues réelles (${rumWindow})</h2>
+    <div class="sub grid-label">Pages rubrique</div>
+    <div class="grid">${rumPageCards.join('')}</div>
+    <div class="sub grid-label">Pages article, agrégées par rubrique</div>
+    <div class="grid">${rumGroupCards.join('')}</div>` : ''}
+    <h2>Distribution Good / NI / Poor — CrUX</h2>
     <div class="panel">
       ${distro('Origine mobile', o.PHONE?.[key])}
       ${d.pages.map((p) => distro(`${p.label} (global)`, p.metrics?.[key])).join('')}
       ${d.articleGroups.map((x) => distro(`Articles ${x.label} (p75)`, x.metrics[key])).join('')}
-      <div class="legend"><span><i style="background:var(--good)"></i>Good</span>
-        <span><i style="background:var(--ni)"></i>Needs improvement</span>
-        <span><i style="background:var(--poor)"></i>Poor</span></div>
+      ${legend}
     </div>
+    ${d.rumDates?.length ? `
+    <h2>Distribution Good / NI / Poor — terrain SpeedCurve (${rumWindow})</h2>
+    <div class="panel">
+      ${d.pages.map((p) => rumDistro(p.label, p.rum)).join('')}
+      ${d.articleGroups.map((x) => rumDistro(`Articles ${x.label}`, x.rum)).join('')}
+      ${legend}
+    </div>` : ''}
     <h2>Historique p75 — origine mobile (relevés hebdo, 28 j glissants)</h2>
-    ${chart(d.history.PHONE?.[key] ?? [], m) || '<div class="panel sub">pas d’historique</div>'}
+    ${chart(histSeries, m) || '<div class="panel sub">pas d\'historique</div>'}
     <h2>Articles — INP p75 par article (${d.articles?.length ?? 0} avec données CrUX, pires en tête)</h2>
     ${table(d.articles, m)}`;
+  setupChartHover();
 }
 
 document.getElementById('meta').textContent =

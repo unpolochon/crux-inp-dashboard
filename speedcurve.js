@@ -11,6 +11,7 @@ const API = 'https://api.speedcurve.com/v1/lux/export';
 const FALLBACK_INDEX = {
   page_id: 0,
   epoch: 2,
+  device_type: 55,
   pathname: 67,
   interaction_to_next_paint: 68,
   inp_element_selector: 69,
@@ -19,7 +20,11 @@ const FALLBACK_INDEX = {
   inp_processing_time: 72,
   inp_presentation_delay: 73,
 };
-const REQUIRED = ['page_id', 'pathname', 'interaction_to_next_paint'];
+const REQUIRED = ['page_id', 'device_type', 'pathname', 'interaction_to_next_paint'];
+
+// Le dashboard entier est mobile (CrUX est interroge en formFactor PHONE) : on ne garde que les
+// pages vues mobile. 'tablet' est exclu, comme CrUX qui separe PHONE et TABLET.
+const DEVICE = 'mobile';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -62,6 +67,7 @@ function parseRow(cells, index, date) {
   if (!pageId || !pathname) return null;
   return {
     id: `${date}:${pageId}`,
+    device: cells[index.device_type],
     pathname,
     epoch: number(cells[index.epoch]) ?? 0,
     inp,
@@ -100,7 +106,7 @@ export async function fetchRumDay(date, pathnames) {
   compressed.pipe(gunzip);
   const lines = createInterface({ input: gunzip, crlfDelay: Infinity });
   const views = new Map();
-  let index;
+  let index, withInp = 0, mobileRows = 0;
 
   try {
     for await (const rawLine of lines) {
@@ -116,7 +122,11 @@ export async function fetchRumDay(date, pathnames) {
       }
 
       const row = parseRow(cells, index, date);
-      if (!row || !pathnames.has(row.pathname)) continue;
+      if (!row) continue;
+      withInp++;
+      if (row.device !== DEVICE) continue;
+      mobileRows++;
+      if (!pathnames.has(row.pathname)) continue;
       const previous = views.get(row.id);
       if (!previous || row.epoch > previous.epoch ||
           (row.epoch === previous.epoch && row.start >= previous.start)) {
@@ -128,8 +138,16 @@ export async function fetchRumDay(date, pathnames) {
     compressed.destroy();
     gunzip.destroy();
   }
+  if (withInp && !mobileRows) {
+    throw new Error(`Export RUM: 0 page vue ${DEVICE} sur ${withInp} avec INP ` +
+      `(colonne device_type deplacee ? verifier l'index ${FALLBACK_INDEX.device_type})`);
+  }
   return [...views.values()];
 }
+
+// Seuils INP Core Web Vitals, fixes par spec : bon <= 200 ms, mauvais > 500 ms. Le RUM donne
+// les valeurs brutes, donc les parts sont exactes la ou CrUX ne fournit que des densites bucketisees.
+const share = (views, test) => views.filter(test).length / views.length;
 
 const roundedPercentile = (values, p) => {
   const valid = values.filter((value) => value != null);
@@ -137,9 +155,12 @@ const roundedPercentile = (values, p) => {
   return result == null ? null : Math.round(result);
 };
 
-export function aggregateRum(records) {
+export function aggregateRum(records, key = (record) => record.pathname) {
   const byPath = new Map();
-  for (const record of records) (byPath.get(record.pathname) ?? byPath.set(record.pathname, []).get(record.pathname)).push(record);
+  for (const record of records) {
+    const k = key(record);
+    (byPath.get(k) ?? byPath.set(k, []).get(k)).push(record);
+  }
 
   return new Map([...byPath].map(([pathname, pageViews]) => {
     const byElement = new Map();
@@ -155,6 +176,9 @@ export function aggregateRum(records) {
     return [pathname, {
       n: pageViews.length,
       inpP75: roundedPercentile(pageViews.map((view) => view.inp), 75),
+      good: share(pageViews, (view) => view.inp <= 200),
+      ni: share(pageViews, (view) => view.inp > 200 && view.inp <= 500),
+      poor: share(pageViews, (view) => view.inp > 500),
       phases: {
         input: roundedPercentile(pageViews.map((view) => view.input), 50),
         processing: roundedPercentile(pageViews.map((view) => view.processing), 50),
@@ -165,12 +189,15 @@ export function aggregateRum(records) {
   }));
 }
 
-const fixture = aggregateRum([
+const fixtureViews = [
   { pathname: '/article', inp: 100, input: 10, processing: 20, presentation: 30, selector: '#menu' },
   { pathname: '/article', inp: 200, input: 20, processing: 30, presentation: 40, selector: '#menu' },
   { pathname: '/article', inp: 300, input: 30, processing: 40, presentation: 50, selector: '#menu' },
   { pathname: '/article', inp: 400, input: 40, processing: 50, presentation: 60, selector: '.search' },
-]).get('/article');
+];
+const fixture = aggregateRum(fixtureViews).get('/article');
 console.assert(fixture.n === 4 && fixture.inpP75 === 325, 'RUM: p75 par page vue');
 console.assert(fixture.phases.processing === 35, 'RUM: mediane des phases');
 console.assert(fixture.elements[0].selector === '#menu' && fixture.elements[0].n === 3, 'RUM: top elements');
+console.assert(fixture.good === 0.5 && fixture.ni === 0.5 && fixture.poor === 0, 'RUM: densites good/ni/poor');
+console.assert(aggregateRum(fixtureViews, () => 'grp').get('grp').n === 4, 'RUM: cle de regroupement');

@@ -90,7 +90,16 @@ const rumDates = [];
 const rumEnabled = cfg.rum?.enabled !== false && !process.argv.includes('--no-rum');
 if (rumEnabled && process.env.SPEEDCURVE_API_KEY) {
   log('→ attribution INP SpeedCurve RUM…');
-  const pathnames = new Set(articles.map((article) => new URL(article.url).pathname));
+  // ponytail: tous les records des pathnames rubrique sont gardes en memoire pour calculer le p75
+  // exact. Si le volume homepage devient un probleme, passer a une agregation en flux (t-digest
+  // ou echantillonnage par reservoir) plutot qu'a un plafond par pathname, qui biaiserait le p75.
+  const articlePaths = new Set(articles.map((article) => new URL(article.url).pathname));
+  // Le filtre SpeedCurve est une egalite exacte : on tente les deux formes, avec et sans slash final.
+  const sectionPaths = new Set(cfg.pages.flatMap((page) => {
+    const pathname = new URL(page.url).pathname;
+    return pathname === '/' ? [pathname] : [pathname, pathname.replace(/\/$/, '')];
+  }));
+  const pathnames = new Set([...articlePaths, ...sectionPaths]);
   const dateForLag = (lag) => new Date(Date.now() - lag * 864e5).toISOString().slice(0, 10).replaceAll('-', '');
   const lags = new Date().getUTCHours() >= 5 ? [2, 1] : [2];
   const records = [];
@@ -98,24 +107,38 @@ if (rumEnabled && process.env.SPEEDCURVE_API_KEY) {
     const rumDate = dateForLag(lag);
     try {
       const day = await fetchRumDay(rumDate, pathnames);
-      records.push(...day);
+      for (const view of day) records.push(view);
       rumDates.push(rumDate);
-      log(`   ✓ ${rumDate}: ${day.length} pages vues avec INP`);
+      log(`   ✓ ${rumDate}: ${day.length} pages vues mobile avec INP`);
     } catch (error) {
       log(`   ! ${rumDate}: ${error.message}`);
     }
   }
 
   const rumByPath = aggregateRum(records);
+  const rumForPath = (pathname) =>
+    rumByPath.get(pathname) ?? rumByPath.get(pathname.replace(/\/$/, '')) ?? null;
   let enriched = 0;
   for (const article of articles) {
-    const rum = rumByPath.get(new URL(article.url).pathname);
+    const rum = rumForPath(new URL(article.url).pathname);
     if (rum) {
       article.rum = rum;
       enriched++;
     }
   }
+  log(`   ${records.length.toLocaleString('fr-FR')} pages vues mobile retenues (${sectionPaths.size} pathnames rubrique)`);
   log(`   ${enriched}/${articles.length} articles enrichis`);
+
+  // Agregat terrain par page rubrique, puis par groupe d'articles : meme semantique de prefixe
+  // que le cote CrUX, et zero appel API en plus (l'export du jour est deja en memoire).
+  for (const page of pages) page.rum = rumForPath(new URL(page.url).pathname);
+  for (const group of articleGroups) {
+    const views = records.filter((view) =>
+      articlePaths.has(view.pathname) && view.pathname.includes(group.prefix));
+    group.rum = views.length ? aggregateRum(views, () => group.id).get(group.id) : null;
+  }
+  log(`   terrain: ${pages.filter((p) => p.rum).length}/${pages.length} rubriques, ` +
+      `${articleGroups.filter((g) => g.rum).length}/${articleGroups.length} groupes d'articles`);
 } else {
   log(`→ attribution INP SpeedCurve ignorée (${rumEnabled ? 'clé absente' : 'désactivée'})`);
 }
