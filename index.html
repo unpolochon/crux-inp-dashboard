@@ -41,6 +41,53 @@
   td.inp { text-align: right; font-weight: 500; color: #fff; }
   td a { color: var(--text); text-decoration: none; }
   td a:hover { text-decoration: underline; }
+  .article-cell { min-width: 260px; }
+  .article-link { display: inline; }
+  .source-chip { display: inline-block; margin-left: 6px; padding: 1px 5px; border: 1px solid #45617a;
+                 border-radius: 2px; color: #a8c5df; font: 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+                 letter-spacing: .06em; text-transform: uppercase; vertical-align: 1px; }
+  .detail-row:hover { background: transparent; }
+  .detail-cell { padding: 0 8px 5px; }
+  .rum-details { margin-top: -1px; }
+  .rum-details summary { width: max-content; color: #a8c5df; cursor: pointer; font-size: 11px;
+                         list-style-position: outside; }
+  .rum-details summary:hover { color: #d6e9fa; }
+  .rum-details summary:focus-visible { outline: 2px solid #8ab8ff; outline-offset: 2px; }
+  .rum-box { margin: 8px 0 4px; padding: 10px; border-left: 2px solid #45617a; background: #14171b; }
+  .rum-head { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 9px; color: var(--muted); }
+  .rum-head strong { color: var(--text); font-weight: 600; }
+  .phase-bar { display: flex; min-width: 240px; height: 24px; overflow: hidden; border: 1px solid var(--line);
+               border-radius: 3px; background: #252a2f; }
+  .phase-bar span { display: flex; align-items: center; justify-content: center; min-width: 0; overflow: hidden;
+                    color: #fff; font-size: 10px; white-space: nowrap; }
+  .phase-input { background: #355b78; }
+  .phase-processing { background: #5d5278; }
+  .phase-presentation { background: #696044; }
+  .phase-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 5px 0 11px; color: var(--muted); font-size: 10px; }
+  .phase-legend i { display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 1px; }
+  .elements-title { margin-bottom: 3px; color: var(--muted); font-size: 10px; text-transform: uppercase;
+                    letter-spacing: .05em; }
+  .elements-table { table-layout: fixed; font-size: 11px; }
+  .elements-table th, .elements-table td { padding: 4px 6px; }
+  .elements-table th:nth-child(2), .elements-table td:nth-child(2) { width: 74px; text-align: right; }
+  .elements-table th:nth-child(3), .elements-table td:nth-child(3) { width: 92px; text-align: right; }
+  .selector { overflow-wrap: anywhere; color: #b9bdc2; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  @media (max-width: 620px) {
+    body { padding: 10px; }
+    .panel { padding: 6px; }
+    .row { grid-template-columns: 105px 1fr; gap: 6px; }
+    .article-cell { min-width: 0; }
+    .articles-table .secondary { display: none; }
+    .articles-table th, .articles-table td { padding: 6px; }
+    .articles-table th:nth-child(2) { white-space: normal; text-align: center !important; }
+    .detail-cell { padding: 0 6px 5px; }
+    .rum-box { padding: 8px; }
+    .rum-head { gap: 4px 12px; }
+    .phase-bar { min-width: 0; }
+    .phase-bar span { font-size: 9px; }
+    .elements-table th:nth-child(2), .elements-table td:nth-child(2) { width: 44px; }
+    .elements-table th:nth-child(3), .elements-table td:nth-child(3) { width: 68px; }
+  }
 </style>
 </head>
 <body>
@@ -57,6 +104,8 @@ const d = await (await fetch('data.json?' + Date.now())).json();
 const color = (m, v) => (v == null ? '#3a3f44' : v <= m.good ? 'var(--good)' : v <= m.poor ? 'var(--ni)' : 'var(--poor)');
 const fmt = (m, v) => (v == null ? '—' : m.unit === 'ms' ? Math.round(v) : v.toFixed(2));
 const pct = (v) => (v == null ? 0 : v * 100);
+const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
 
 const stat = (title, m, v) => v == null
   ? `<div class="stat empty"><header>${title}</header><div class="val">pas de données CrUX</div></div>`
@@ -103,49 +152,79 @@ function table(rows, m) {
   if (!rows?.length) return '<div class="panel sub">pas d’articles avec données CrUX</div>';
   const p = (v) => (v == null ? '—' : (v * 100).toFixed(0) + ' %');
   const day = (s) => (s ? s.slice(0, 10).split('-').reverse().join('/') : '—');
-  const tr = (a) => `<tr>
-    <td><a href="${a.url}" target="_blank" rel="noopener">${a.title ?? a.url}</a></td>
+  const rum = (x) => {
+    const phases = x.phases ?? {};
+    const phaseRows = [
+      ['Délai d’entrée', phases.input, 'phase-input'],
+      ['Traitement', phases.processing, 'phase-processing'],
+      ['Présentation', phases.presentation, 'phase-presentation'],
+    ];
+    const total = phaseRows.reduce((sum, [, value]) => sum + (value ?? 0), 0);
+    const bar = total ? phaseRows.map(([label, value, cls]) =>
+      `<span class="${cls}" style="width:${((value ?? 0) / total) * 100}%" title="${label} : ${value ?? 0} ms">${value ?? 0} ms</span>`).join('') : '';
+    const elements = x.elements?.length
+      ? `<div class="elements-title">Éléments des interactions mesurées</div><table class="elements-table">
+          <thead><tr><th>Sélecteur</th><th>Vues</th><th>INP médian</th></tr></thead>
+          <tbody>${x.elements.map((element) => `<tr><td class="selector" title="${esc(element.selector)}">${esc(element.selector)}</td>
+            <td>${element.n}</td><td>${element.inpMedian} ms</td></tr>`).join('')}</tbody></table>`
+      : '<div class="sub">aucun sélecteur d’interaction disponible</div>';
+    return `<details class="rum-details"><summary>Voir l’attribution terrain</summary><div class="rum-box">
+      <div class="rum-head"><span><strong>${x.n.toLocaleString('fr-FR')}</strong> pages vues avec INP</span>
+        <span>INP terrain p75 <strong>${x.inpP75} ms</strong></span>
+        <span>Phases <strong>médianes</strong></span></div>
+      <div class="phase-bar" aria-label="Phases médianes de l’INP">${bar}</div>
+      <div class="phase-legend">${phaseRows.map(([label, value, cls]) =>
+        `<span><i class="${cls}"></i>${label} ${value ?? '—'} ms</span>`).join('')}</div>${elements}</div></details>`;
+  };
+  const tr = (a) => `<tr class="article-row">
+    <td class="article-cell"><a class="article-link" href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.title ?? a.url)}</a>
+      ${a.rum ? '<span class="source-chip">rum</span>' : ''}</td>
     <td class="inp" style="background:${color(m, a.p75)}">${Math.round(a.p75)}</td>
-    <td class="num">${p(a.good)}</td><td class="num">${p(a.ni)}</td><td class="num">${p(a.poor)}</td>
-    <td class="num">${day(a.published)}</td></tr>`;
-  return `<div class="panel"><table>
+    <td class="num secondary">${p(a.good)}</td><td class="num secondary">${p(a.ni)}</td><td class="num secondary">${p(a.poor)}</td>
+    <td class="num secondary">${day(a.published)}</td></tr>
+    ${a.rum ? `<tr class="detail-row"><td class="detail-cell" colspan="6">${rum(a.rum)}</td></tr>` : ''}`;
+  return `<div class="panel"><table class="articles-table">
     <thead><tr><th>Article</th><th style="text-align:right">INP p75 (mobile)</th>
-      <th style="text-align:right">% Good</th><th style="text-align:right">% NI</th>
-      <th style="text-align:right">% Poor</th><th style="text-align:right">Publié le</th></tr></thead>
+      <th class="secondary" style="text-align:right">% Good</th><th class="secondary" style="text-align:right">% NI</th>
+      <th class="secondary" style="text-align:right">% Poor</th><th class="secondary" style="text-align:right">Publié le</th></tr></thead>
     <tbody>${rows.map(tr).join('')}</tbody></table></div>`;
 }
 
 function render() {
   const m = METRIC, key = m.key;
-  const o = d.origins, g = d.articleGroups.find((x) => x.id === 'all');
-  const cards = [
+  const o = d.origins;
+  const p75Label = (x) => x.id === 'all' ? `${m.label} p75 articles J-2` : `Articles ${x.label} — p75`;
+
+  const globalCards = [
     stat(`${m.label} global mobile (origine)`, m, o.PHONE?.[key]?.p75),
-    stat(`${m.label} p75 articles J-2 (n=${g?.metrics[key]?.samples ?? 0})`, m, g?.metrics[key]?.p75),
-    ...d.pages.map((p) => stat(`${p.label} — mobile`, m, p.metrics?.[key]?.p75)),
-    ...d.articleGroups.filter((x) => x.id !== 'all')
-      .map((x) => stat(`Articles ${x.label} — p75 (n=${x.metrics[key]?.samples ?? 0})`, m, x.metrics[key]?.p75)),
+    ...d.pages.map((p) => stat(`${p.label} — global mobile`, m, p.metrics?.[key]?.p75)),
   ];
+  const p75Cards = d.articleGroups.map((x) =>
+    stat(`${p75Label(x)} (n=${x.metrics[key]?.samples ?? 0})`, m, x.metrics[key]?.p75));
 
   document.getElementById('view').innerHTML = `
     <div class="sub" style="margin-bottom:10px">${m.desc}</div>
-    <div class="grid">${cards.join('')}</div>
+    <h2>Vue globale — mesure CrUX directe par page</h2>
+    <div class="grid">${globalCards.join('')}</div>
+    <h2>Vue p75 — agrégat des articles par rubrique</h2>
+    <div class="grid">${p75Cards.join('')}</div>
     <h2>Distribution Good / NI / Poor</h2>
     <div class="panel">
       ${distro('Origine mobile', o.PHONE?.[key])}
-      ${d.pages.map((p) => distro(`${p.label} (mob)`, p.metrics?.[key])).join('')}
-      ${d.articleGroups.map((x) => distro(`Articles ${x.label}`, x.metrics[key])).join('')}
+      ${d.pages.map((p) => distro(`${p.label} (global)`, p.metrics?.[key])).join('')}
+      ${d.articleGroups.map((x) => distro(`Articles ${x.label} (p75)`, x.metrics[key])).join('')}
       <div class="legend"><span><i style="background:var(--good)"></i>Good</span>
         <span><i style="background:var(--ni)"></i>Needs improvement</span>
         <span><i style="background:var(--poor)"></i>Poor</span></div>
     </div>
     <h2>Historique p75 — origine mobile (relevés hebdo, 28 j glissants)</h2>
     ${chart(d.history.PHONE?.[key] ?? [], m) || '<div class="panel sub">pas d’historique</div>'}
-    <h2>Articles J-2 — INP p75 par article (${d.articles?.length ?? 0} avec données CrUX, pires en tête)</h2>
+    <h2>Articles — INP p75 par article (${d.articles?.length ?? 0} avec données CrUX, pires en tête)</h2>
     ${table(d.articles, m)}`;
 }
 
 document.getElementById('meta').textContent =
-  `Collecte ${new Date(d.collectedAt).toLocaleString('fr-FR')} · articles J-2 du ${d.articlesDate} · source CrUX API (terrain, p75 sur 28 jours glissants)`;
+  `Collecte ${new Date(d.collectedAt).toLocaleString('fr-FR')} · articles J-2 du ${d.articlesDate} · sources CrUX API (p75 sur 28 jours)${d.rumDates?.length ? ` + SpeedCurve RUM (${d.rumDates.map((date) => `${date.slice(6, 8)}/${date.slice(4, 6)}`).join(' et ')})` : ''}`;
 render();
 </script>
 </body>

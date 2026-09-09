@@ -1,27 +1,14 @@
 // Collecte CrUX -> data.json (utilisé par le dashboard).
 import { readFileSync, writeFileSync } from 'node:fs';
-import { queryRecord, queryHistory, fetchArticles, pool } from './crux.js';
+import { queryRecord, queryHistory, fetchArticles, fetchSectionArticles, pool } from './crux.js';
+import { fetchRumDay, aggregateRum } from './speedcurve.js';
+import { percentile } from './stats.js';
 
 const cfg = JSON.parse(readFileSync(new URL('./config.json', import.meta.url)));
 const log = (...a) => console.log(...a);
 const METRIC = 'interaction_to_next_paint';
 
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
-
-// Percentile (rang interpolé) d'un tableau de valeurs.
-function percentile(xs, p) {
-  if (!xs.length) return null;
-  const s = [...xs].sort((a, b) => a - b);
-  const idx = (p / 100) * (s.length - 1);
-  const lo = Math.floor(idx), hi = Math.ceil(idx);
-  return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (idx - lo);
-}
-
-// ponytail: auto-contrôle en tête de collecte plutôt qu'un fichier de test dédié.
-console.assert(percentile([10], 75) === 10, 'percentile: valeur unique');
-console.assert(percentile([1, 2, 3, 4, 5], 75) === 4, 'percentile: rang entier');
-console.assert(percentile([1, 2, 3, 4], 75) === 3.25, 'percentile: rang interpolé');
-console.assert(percentile([], 75) === null, 'percentile: vide');
 
 // Le "p75" d'un groupe d'articles est le p75 des p75 par article (comme Grafana),
 // pas leur moyenne : une moyenne lisse les gros écarts et sous-estime les pires cas.
@@ -67,7 +54,7 @@ const { date, urls, allUrls, meta } = await fetchArticles(cfg, cfg.articlesLagDa
 log(`   ${urls.length} articles publiés le ${date}`);
 
 const articleGroups = [];
-let articles = [];
+const byUrl = new Map();
 for (const g of cfg.articleGroups) {
   // Les rubriques de niche publient peu : si rien à J-2, on élargit à tout le sitemap news (~3 semaines).
   let scope = 'J-' + cfg.articlesLagDays;
@@ -75,6 +62,13 @@ for (const g of cfg.articleGroups) {
   if (!sample.length && g.prefix) {
     sample = allUrls.filter((u) => u.includes(g.prefix));
     scope = 'sitemap récent';
+  }
+  // Jardin n'apparaît pas du tout dans le sitemap news : on scrape la page rubrique.
+  if (!sample.length && g.sectionUrl) {
+    const sec = await fetchSectionArticles(g.sectionUrl, g.prefix);
+    for (const [u, m] of sec.meta) meta.set(u, m);
+    sample = sec.urls;
+    scope = 'page rubrique';
   }
   // Le groupe "all" doit couvrir tous les articles J-2 (sinon le tableau rate les pires, cf. bug constaté) ;
   // seules les rubriques de niche (élargies au sitemap ~3 semaines) sont plafonnées pour limiter les appels CrUX.
@@ -84,13 +78,46 @@ for (const g of cfg.articleGroups) {
   log(`   ${g.label} (${scope}): ${recs.length}/${sample.length} avec données CrUX`);
   if (recs.length) articleGroups.push({ ...g, date, scope, queried: sample.length, metrics: aggregate(recs) });
 
-  // Le groupe "all" interroge déjà chaque article : on garde le détail pour le tableau par article.
-  if (g.id === 'all') {
-    articles = recs
-      .map((r) => ({ url: r.key.url, ...meta.get(r.key.url), ...r.metrics[METRIC] }))
-      .filter((a) => a.p75 != null)
-      .sort((a, b) => b.p75 - a.p75);
+  // Détail par article pour le tableau : dédupliqué par URL (les rubriques recoupent "all").
+  for (const r of recs) {
+    const a = { url: r.key.url, ...meta.get(r.key.url), ...r.metrics[METRIC] };
+    if (a.p75 != null) byUrl.set(a.url, a);
   }
+}
+const articles = [...byUrl.values()].sort((a, b) => b.p75 - a.p75);
+
+const rumDates = [];
+const rumEnabled = cfg.rum?.enabled !== false && !process.argv.includes('--no-rum');
+if (rumEnabled && process.env.SPEEDCURVE_API_KEY) {
+  log('→ attribution INP SpeedCurve RUM…');
+  const pathnames = new Set(articles.map((article) => new URL(article.url).pathname));
+  const dateForLag = (lag) => new Date(Date.now() - lag * 864e5).toISOString().slice(0, 10).replaceAll('-', '');
+  const lags = new Date().getUTCHours() >= 5 ? [2, 1] : [2];
+  const records = [];
+  for (const lag of lags) {
+    const rumDate = dateForLag(lag);
+    try {
+      const day = await fetchRumDay(rumDate, pathnames);
+      records.push(...day);
+      rumDates.push(rumDate);
+      log(`   ✓ ${rumDate}: ${day.length} pages vues avec INP`);
+    } catch (error) {
+      log(`   ! ${rumDate}: ${error.message}`);
+    }
+  }
+
+  const rumByPath = aggregateRum(records);
+  let enriched = 0;
+  for (const article of articles) {
+    const rum = rumByPath.get(new URL(article.url).pathname);
+    if (rum) {
+      article.rum = rum;
+      enriched++;
+    }
+  }
+  log(`   ${enriched}/${articles.length} articles enrichis`);
+} else {
+  log(`→ attribution INP SpeedCurve ignorée (${rumEnabled ? 'clé absente' : 'désactivée'})`);
 }
 
 writeFileSync(
@@ -105,6 +132,7 @@ writeFileSync(
       pages,
       articleGroups,
       articles,
+      rumDates,
     },
     null,
     2

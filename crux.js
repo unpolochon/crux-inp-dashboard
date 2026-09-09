@@ -1,4 +1,5 @@
 // Client CrUX + collecte des URLs d'articles.
+const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const API = 'https://chromeuxreport.googleapis.com/v1/records';
 const KEY = process.env.CRUX_API_KEY;
 if (!KEY) throw new Error('CRUX_API_KEY manquante');
@@ -6,7 +7,30 @@ if (!KEY) throw new Error('CRUX_API_KEY manquante');
 // ponytail: on ne suit plus que l'INP mobile, cf. demande utilisateur.
 const METRICS = ['interaction_to_next_paint'];
 
+// Limiteur de débit proactif : CrUX autorise 150 requêtes/minute. On espace nous-mêmes les
+// appels (1 toutes les 400 ms) pour ne quasiment jamais taper le quota, au lieu de foncer et
+// de subir des 429 en boucle qui peuvent faire échouer toute la collecte.
+const MIN_INTERVAL_MS = 60_000 / 150;
+
+// Calcul pur (testable sans horloge réelle) : temps d'attente et prochain slot libre.
+function nextSlotFor(now, prevSlot, intervalMs) {
+  const wait = Math.max(0, prevSlot - now);
+  return { wait, slot: Math.max(now, prevSlot) + intervalMs };
+}
+console.assert(nextSlotFor(0, 0, 400).wait === 0, 'throttle: premier appel immédiat');
+console.assert(nextSlotFor(0, 0, 400).slot === 400, 'throttle: slot suivant +400ms');
+console.assert(nextSlotFor(100, 400, 400).wait === 300, 'throttle: attente si en avance sur le slot');
+console.assert(nextSlotFor(900, 400, 400).wait === 0, 'throttle: pas d’attente si déjà en retard');
+
+let nextSlot = 0;
+async function throttle() {
+  const { wait, slot } = nextSlotFor(Date.now(), nextSlot, MIN_INTERVAL_MS);
+  nextSlot = slot;
+  if (wait) await new Promise((r) => setTimeout(r, wait));
+}
+
 async function post(endpoint, body, attempt = 0) {
+  await throttle();
   const r = await fetch(`${API}:${endpoint}?key=${KEY}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -113,4 +137,25 @@ export async function fetchArticles(cfg, lagDays) {
   }
   const urls = [...meta.keys()];
   return { date: stamp, urls: urls.filter((u) => u.includes(stamp)), allUrls: urls, meta };
+}
+
+// Titre lisible depuis le slug d'URL (les sources sans sitemap n'ont pas de <news:title>).
+const slugTitle = (path) =>
+  path.split('/').pop().replace(/\.php$/, '').replace(/-[A-Z0-9]{20,}$/, '')
+    .replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
+console.assert(slugTitle('/jardin/actu/mon-chat-dort-12-heures-JRZSWXAPVBGHJFCHI7546QAWCI.php')
+  === 'Mon chat dort 12 heures', 'slugTitle: id retiré, tirets remplacés');
+
+// Certaines rubriques (Jardin) sont absentes du sitemap news : on récupère leurs articles
+// depuis la page rubrique. Pas de date de publication disponible par cette voie.
+export async function fetchSectionArticles(sectionUrl, prefix) {
+  // UA complet obligatoire : le CDN renvoie 403 sur un User-Agent court.
+  const html = await fetch(sectionUrl, { headers: { 'User-Agent': UA } })
+    .then((r) => r.text())
+    .catch(() => '');
+  const origin = new URL(sectionUrl).origin;
+  const paths = [...new Set([...html.matchAll(/"(\/[^"]*\.php)"/g)].map((m) => m[1]))]
+    .filter((p) => p.startsWith(prefix));
+  const meta = new Map(paths.map((p) => [origin + p, { title: slugTitle(p), published: null }]));
+  return { urls: [...meta.keys()], meta };
 }

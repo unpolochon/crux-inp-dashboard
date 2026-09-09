@@ -4,6 +4,7 @@
   "sitemapPages": [0, 100, 200, 300, 400, 500, 600, 700, 800],
   "articlesLagDays": 2,
   "articlesSampleSize": 80,
+  "rum": { "enabled": true },
   "pages": [
     { "id": "homepage", "label": "Homepage", "url": "https://www.leparisien.fr/", "formFactors": ["PHONE"] },
     { "id": "eco", "label": "Rubrique Éco", "url": "https://www.leparisien.fr/economie/", "formFactors": ["PHONE"] },
@@ -17,9 +18,13 @@
   ],
   "articleGroups": [
     { "id": "all", "label": "Tous articles", "prefix": "" },
-    { "id": "etudiant", "label": "Étudiant", "prefix": "/etudiant/" },
+    { "id": "eco", "label": "Éco", "prefix": "/economie/" },
     { "id": "sports", "label": "Sports", "prefix": "/sports/" },
+    { "id": "foot", "label": "Foot", "prefix": "/sports/football/" },
+    { "id": "politique", "label": "Politique", "prefix": "/politique/" },
     { "id": "faits-divers", "label": "Faits divers", "prefix": "/faits-divers/" },
+    { "id": "etudiant", "label": "Étudiant", "prefix": "/etudiant/" },
+    { "id": "jardin", "label": "Jardin", "prefix": "/jardin/", "sectionUrl": "https://www.leparisien.fr/jardin/" },
     { "id": "environnement", "label": "Environnement", "prefix": "/environnement/" }
   ]
 }
