@@ -118,9 +118,9 @@ export async function fetchArticles(cfg, lagDays) {
 
   const pages = await Promise.all(
     cfg.sitemapPages.map((from) =>
-      fetch(cfg.sitemapUrl + from, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1)' } })
-        .then((r) => r.text())
-        .catch(() => '')
+      fetch(cfg.sitemapUrl + from, { headers: { 'User-Agent': UA } })
+        .then((r) => (r.ok ? r.text() : (console.log(`   ! sitemap from=${from}: HTTP ${r.status}`), '')))
+        .catch((e) => (console.log(`   ! sitemap from=${from}: ${e.message}`), ''))
     )
   );
   // Titre + date de publication viennent du sitemap news : évite un fetch HTML par article.
@@ -136,6 +136,8 @@ export async function fetchArticles(cfg, lagDays) {
     }
   }
   const urls = [...meta.keys()];
+  // Un sitemap vide (CDN qui bloque, panne) doit faire echouer la collecte, pas publier un dashboard vide.
+  if (!urls.length) throw new Error('sitemap news vide : aucune URL récupérée');
   return { date: stamp, urls: urls.filter((u) => u.includes(stamp)), allUrls: urls, meta };
 }
 

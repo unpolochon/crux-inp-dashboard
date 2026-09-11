@@ -1,5 +1,5 @@
 // Collecte CrUX -> data.json (utilisé par le dashboard).
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { queryRecord, queryHistory, fetchArticles, fetchSectionArticles, pool } from './crux.js';
 import { fetchRumDay, aggregateRum } from './speedcurve.js';
 import { aggregate } from './stats.js';
@@ -166,6 +166,7 @@ if (rumEnabled && process.env.SPEEDCURVE_API_KEY) {
   log(`→ attribution INP SpeedCurve ignorée (${rumEnabled ? 'clé absente' : 'désactivée'})`);
 }
 
+mkdirSync(new URL('./public/', import.meta.url), { recursive: true }); // public/ ne contient que data.json, non versionné
 writeFileSync(
   new URL('./public/data.json', import.meta.url),
   JSON.stringify(
