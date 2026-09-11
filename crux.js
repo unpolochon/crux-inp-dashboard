@@ -141,23 +141,37 @@ export async function fetchArticles(cfg, lagDays) {
   return { date: stamp, urls: urls.filter((u) => u.includes(stamp)), allUrls: urls, meta };
 }
 
-// Titre lisible depuis le slug d'URL (les sources sans sitemap n'ont pas de <news:title>).
-const slugTitle = (path) =>
-  path.split('/').pop().replace(/\.php$/, '').replace(/-[A-Z0-9]{20,}$/, '')
-    .replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
-console.assert(slugTitle('/jardin/actu/mon-chat-dort-12-heures-JRZSWXAPVBGHJFCHI7546QAWCI.php')
-  === 'Mon chat dort 12 heures', 'slugTitle: id retiré, tirets remplacés');
+// Jour de publication depuis l'URL (jj-mm-aaaa) -> ISO ; null pour les rubriques sans date (Étudiant, Jardin).
+export const pubDate = (url) => url.match(/-(\d{2})-(\d{2})-(\d{4})-/)?.slice(1, 4).reverse().join('-') ?? null;
+console.assert(pubDate('https://x.fr/sports/foo-bar-09-09-2026-ABC.php') === '2026-09-09', 'pubDate: jj-mm-aaaa → ISO');
+console.assert(pubDate('https://x.fr/jardin/foo.php') === null, 'pubDate: sans date');
 
-// Certaines rubriques (Jardin) sont absentes du sitemap news : on récupère leurs articles
-// depuis la page rubrique. Pas de date de publication disponible par cette voie.
-export async function fetchSectionArticles(sectionUrl, prefix) {
-  // UA complet obligatoire : le CDN renvoie 403 sur un User-Agent court.
-  const html = await fetch(sectionUrl, { headers: { 'User-Agent': UA } })
-    .then((r) => r.text())
-    .catch(() => '');
-  const origin = new URL(sectionUrl).origin;
-  const paths = [...new Set([...html.matchAll(/"(\/[^"]*\.php)"/g)].map((m) => m[1]))]
-    .filter((p) => p.startsWith(prefix));
-  const meta = new Map(paths.map((p) => [origin + p, { title: slugTitle(p), published: null }]));
-  return { urls: [...meta.keys()], meta };
+const unescape = (xml) => xml.replace(/&(amp|lt|gt|quot|apos|#(\d+));/g, (_, e, n) =>
+  n ? String.fromCodePoint(n) : { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }[e]);
+console.assert(unescape('A &amp; B &#233;t&#233;') === 'A & B été', 'unescape: entités XML et numériques');
+
+// Flux RSS (feeds.leparisien.fr, CloudFront) : le sitemap news sur www.leparisien.fr (Akamai) renvoie
+// 403 aux IP datacenter (GitHub Actions). Un flux = les 100 derniers articles ; le flux principal ne
+// remonte pas à J-2, d'où l'accumulation dans metrics.sqlite (db.addArticles) et un flux par rubrique.
+// Retourne [{ url, title, published }], published null si l'URL n'est pas datée.
+export async function fetchFeeds(cfg) {
+  const feeds = [cfg.feedUrl, ...cfg.articleGroups.filter((g) => g.prefix).map((g) => cfg.feedUrl + g.prefix.replace(/\/$/, ''))];
+  const pages = await Promise.all(
+    feeds.map((url) =>
+      fetch(url, { headers: { 'User-Agent': UA } })
+        .then((r) => (r.ok ? r.text() : (console.log(`   ! flux ${url}: HTTP ${r.status}`), '')))
+        .catch((e) => (console.log(`   ! flux ${url}: ${e.message}`), ''))
+    )
+  );
+  const items = new Map();
+  for (const xml of pages) {
+    for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+      const url = m[1].match(/<link>([^<]+)<\/link>/)?.[1]?.trim();
+      if (!url || items.has(url)) continue;
+      const title = m[1].match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/)?.[1]?.trim();
+      items.set(url, { url, title: title ? unescape(title) : url, published: pubDate(url) });
+    }
+  }
+  if (!items.size) throw new Error('flux RSS vides : aucune URL récupérée');
+  return [...items.values()];
 }

@@ -4,7 +4,7 @@
 // l'aurait fait la collecte quotidienne (publication + articlesLagDays). Approximation : le p75
 // couvre toute la vie de l'article (fenetre 28 j), pas seulement ses 2 premiers jours.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { queryRecord, fetchArticles, pool } from './crux.js';
+import { queryRecord, fetchArticles, pubDate, pool } from './crux.js';
 import { aggregate } from './stats.js';
 import { openDb } from './db.js';
 
@@ -12,11 +12,7 @@ const cfg = JSON.parse(readFileSync(new URL('./config.json', import.meta.url)));
 const METRIC = 'interaction_to_next_paint';
 const today = new Date().toISOString().slice(0, 10);
 
-// Jour de publication depuis l'URL (jj-mm-aaaa), meme critere que la collecte quotidienne.
-const pubDate = (url) => url.match(/-(\d{2})-(\d{2})-(\d{4})-/)?.slice(1, 4).reverse().join('-') ?? null;
 const plusDays = (d, n) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
-console.assert(pubDate('https://x.fr/sports/foo-bar-09-09-2026-ABC.php') === '2026-09-09', 'pubDate: jj-mm-aaaa → ISO');
-console.assert(pubDate('https://x.fr/jardin/foo.php') === null, 'pubDate: sans date');
 console.assert(plusDays('2026-08-31', 2) === '2026-09-02', 'plusDays: passage de mois');
 
 // Certaines rubriques (Étudiant) n'ont pas de date dans l'URL : on prend celle du sitemap.

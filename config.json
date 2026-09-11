@@ -2,6 +2,7 @@
   "origin": "https://www.leparisien.fr",
   "sitemapUrl": "https://www.leparisien.fr/arc/outboundfeeds/sitemapnews/?outputType=xml&from=",
   "sitemapPages": [0, 100, 200, 300, 400, 500, 600, 700, 800],
+  "feedUrl": "https://feeds.leparisien.fr/leparisien/rss",
   "articlesLagDays": 2,
   "articlesSampleSize": 80,
   "rum": { "enabled": true },
@@ -24,7 +25,7 @@
     { "id": "politique", "label": "Politique", "prefix": "/politique/" },
     { "id": "faits-divers", "label": "Faits divers", "prefix": "/faits-divers/" },
     { "id": "etudiant", "label": "Étudiant", "prefix": "/etudiant/" },
-    { "id": "jardin", "label": "Jardin", "prefix": "/jardin/", "sectionUrl": "https://www.leparisien.fr/jardin/" },
+    { "id": "jardin", "label": "Jardin", "prefix": "/jardin/" },
     { "id": "environnement", "label": "Environnement", "prefix": "/environnement/" }
   ]
 }

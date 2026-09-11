@@ -1,6 +1,6 @@
 // Collecte CrUX -> data.json (utilisé par le dashboard).
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { queryRecord, queryHistory, fetchArticles, fetchSectionArticles, pool } from './crux.js';
+import { queryRecord, queryHistory, fetchFeeds, pool } from './crux.js';
 import { fetchRumDay, aggregateRum } from './speedcurve.js';
 import { aggregate } from './stats.js';
 import { openDb } from './db.js';
@@ -33,28 +33,26 @@ const pages = (
 ).filter(Boolean);
 
 log(`→ articles J-${cfg.articlesLagDays}…`);
-const { date, urls, allUrls, meta } = await fetchArticles(cfg, cfg.articlesLagDays);
-log(`   ${urls.length} articles publiés le ${date}`);
+// Les flux RSS ne remontent qu'aux 100 derniers articles : on accumule chaque passage dans
+// metrics.sqlite et on relit J-2 depuis la base.
+const db = openDb();
+const feed = await fetchFeeds(cfg);
+db.addArticles(feed);
+const { date, urls, allUrls, meta } = db.articles(cfg.articlesLagDays);
+log(`   ${feed.length} articles dans les flux, ${urls.length} publiés le ${date} (${allUrls.length} récents en base)`);
 
 const articleGroups = [];
 const byUrl = new Map();
 for (const g of cfg.articleGroups) {
-  // Les rubriques de niche publient peu : si rien à J-2, on élargit à tout le sitemap news (~3 semaines).
+  // Les rubriques de niche publient peu : si rien à J-2, on élargit aux articles récents (~3 semaines).
   let scope = 'J-' + cfg.articlesLagDays;
   let sample = urls.filter((u) => u.includes(g.prefix));
   if (!sample.length && g.prefix) {
     sample = allUrls.filter((u) => u.includes(g.prefix));
-    scope = 'sitemap récent';
-  }
-  // Jardin n'apparaît pas du tout dans le sitemap news : on scrape la page rubrique.
-  if (!sample.length && g.sectionUrl) {
-    const sec = await fetchSectionArticles(g.sectionUrl, g.prefix);
-    for (const [u, m] of sec.meta) meta.set(u, m);
-    sample = sec.urls;
-    scope = 'page rubrique';
+    scope = 'flux récent';
   }
   // Le groupe "all" doit couvrir tous les articles J-2 (sinon le tableau rate les pires, cf. bug constaté) ;
-  // seules les rubriques de niche (élargies au sitemap ~3 semaines) sont plafonnées pour limiter les appels CrUX.
+  // seules les rubriques de niche (élargies aux articles récents) sont plafonnées pour limiter les appels CrUX.
   if (g.id !== 'all') sample = sample.slice(0, cfg.articlesSampleSize);
   if (!sample.length) continue;
   const recs = (await pool(sample, 5, (u) => queryRecord({ url: u }, 'PHONE'))).filter(Boolean);
@@ -72,7 +70,6 @@ const articles = [...byUrl.values()].sort((a, b) => b.p75 - a.p75);
 // Les articles J-2 changent chaque jour : CrUX n'a pas d'historique pour eux. On enregistre nous-mêmes
 // les agrégats du jour dans metrics.sqlite (versionné, survit à la régénération de data.json).
 // Une re-collecte le même jour remplace le point du jour au lieu de le doubler.
-const db = openDb();
 const today = new Date().toISOString().slice(0, 10);
 const row = (kind, id, m) => ({ date: today, source: 'crux', kind, id, ...m });
 db.upsert([
