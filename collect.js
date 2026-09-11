@@ -2,36 +2,12 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { queryRecord, queryHistory, fetchArticles, fetchSectionArticles, pool } from './crux.js';
 import { fetchRumDay, aggregateRum } from './speedcurve.js';
-import { percentile } from './stats.js';
+import { aggregate } from './stats.js';
+import { openDb } from './db.js';
 
 const cfg = JSON.parse(readFileSync(new URL('./config.json', import.meta.url)));
 const log = (...a) => console.log(...a);
 const METRIC = 'interaction_to_next_paint';
-
-const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
-
-// Le "p75" d'un groupe d'articles est le p75 des p75 par article (comme Grafana),
-// pas leur moyenne : une moyenne lisse les gros écarts et sous-estime les pires cas.
-// Les densités good/ni/poor restent moyennées (ce sont déjà des proportions).
-function aggregate(records) {
-  const byMetric = {};
-  for (const r of records) {
-    for (const [name, m] of Object.entries(r.metrics)) {
-      (byMetric[name] ??= []).push(m);
-    }
-  }
-  const out = {};
-  for (const [name, ms] of Object.entries(byMetric)) {
-    out[name] = {
-      p75: percentile(ms.map((m) => m.p75).filter((v) => v != null), 75),
-      good: mean(ms.map((m) => m.good).filter((v) => v != null)),
-      ni: mean(ms.map((m) => m.ni).filter((v) => v != null)),
-      poor: mean(ms.map((m) => m.poor).filter((v) => v != null)),
-      samples: ms.length,
-    };
-  }
-  return out;
-}
 
 log('→ origine (mobile)…');
 const [originPhone, historyPhone] = await Promise.all([
@@ -43,9 +19,16 @@ log('→ pages clés…');
 const targets = cfg.pages.flatMap((p) => p.formFactors.map((ff) => ({ ...p, formFactor: ff })));
 const pages = (
   await pool(targets, 5, async (t) => {
-    const rec = await queryRecord({ url: t.url }, t.formFactor);
+    const [rec, hist] = await Promise.all([
+      queryRecord({ url: t.url }, t.formFactor),
+      queryHistory({ url: t.url }, t.formFactor),
+    ]);
     log(`   ${rec ? '✓' : '·'} ${t.label} [${t.formFactor}]`);
-    return { id: t.id, label: t.label, url: t.url, formFactor: t.formFactor, metrics: rec?.metrics ?? null };
+    return {
+      id: t.id, label: t.label, url: t.url, formFactor: t.formFactor,
+      metrics: rec?.metrics ?? null,
+      history: hist?.[METRIC] ?? null,
+    };
   })
 ).filter(Boolean);
 
@@ -85,6 +68,20 @@ for (const g of cfg.articleGroups) {
   }
 }
 const articles = [...byUrl.values()].sort((a, b) => b.p75 - a.p75);
+
+// Les articles J-2 changent chaque jour : CrUX n'a pas d'historique pour eux. On enregistre nous-mêmes
+// les agrégats du jour dans metrics.sqlite (versionné, survit à la régénération de data.json).
+// Une re-collecte le même jour remplace le point du jour au lieu de le doubler.
+const db = openDb();
+const today = new Date().toISOString().slice(0, 10);
+const row = (kind, id, m) => ({ date: today, source: 'crux', kind, id, ...m });
+db.upsert([
+  row('origin', 'origin', originPhone?.metrics?.[METRIC]),
+  ...pages.map((p) => row('page', p.id, p.metrics?.[METRIC])),
+  ...articleGroups.map((g) => row('group', g.id, g.metrics[METRIC])),
+]);
+for (const g of articleGroups) g.history = db.series('crux', 'group', g.id);
+log(`→ metrics.sqlite: ${articleGroups.length} groupes, ${articleGroups.find((g) => g.id === 'all')?.history.length ?? 0} relevés pour "all"`);
 
 const rumDates = [];
 let rumElements = [];
@@ -141,6 +138,16 @@ if (rumEnabled && process.env.SPEEDCURVE_API_KEY) {
   log(`   terrain: ${pages.filter((p) => p.rum).length}/${pages.length} rubriques, ` +
       `${articleGroups.filter((g) => g.rum).length}/${articleGroups.length} groupes d'articles`);
 
+  // Agrégats terrain en base, datés du jour de collecte (l'export couvre J-2 et J-1) : même
+  // sémantique que les lignes CrUX, "ce que le dashboard affichait ce jour-là".
+  // ponytail: seulement p75/good/ni/poor/n. Les phases et éléments (attribution) restent hors base.
+  const rumRow = (kind, id, rum) =>
+    ({ date: today, source: 'rum', kind, id, p75: rum?.inpP75, good: rum?.good, ni: rum?.ni, poor: rum?.poor, samples: rum?.n });
+  db.upsert([
+    ...pages.map((p) => rumRow('page', p.id, p.rum)),
+    ...articleGroups.map((g) => rumRow('group', g.id, g.rum)),
+  ]);
+
   // Top des elements responsables de l'INP, tous pathnames confondus : la liste de ce qu'il faut
   // corriger en premier. Trie par nombre d'interactions au-dessus du seuil "bon" (200 ms), pas par
   // volume brut : un element tres sollicite mais rapide n'est pas un probleme a corriger.
@@ -160,7 +167,7 @@ if (rumEnabled && process.env.SPEEDCURVE_API_KEY) {
 }
 
 writeFileSync(
-  new URL('./data.json', import.meta.url),
+  new URL('./public/data.json', import.meta.url),
   JSON.stringify(
     {
       collectedAt: new Date().toISOString(),

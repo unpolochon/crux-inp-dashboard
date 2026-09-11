@@ -79,7 +79,7 @@ export async function queryHistory(target, formFactor) {
     return `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`;
   });
   const series = {};
-  for (const [name, m] of Object.entries(rec.metrics)) {
+  for (const [name, m] of Object.entries(rec.metrics ?? {})) {
     const p75s = m.percentilesTimeseries?.p75s;
     if (!p75s) continue;
     const bins = m.histogramTimeseries || [];

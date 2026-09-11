@@ -1,2 +1,7 @@
 .env
-data.json
+node_modules
+dist
+public/data.json
+.backfill-cache.json
+.claude/
+history.json

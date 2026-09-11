@@ -1,0 +1,66 @@
+# Collecte CrUX + RUM, commit de metrics.sqlite, build et déploiement GitHub Pages.
+name: collect
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    # GitHub cron est en UTC : les deux lignes couvrent heure d'été et d'hiver de Paris,
+    # le job "gate" ne garde que les passages à 08h, 12h et 17h heure de Paris.
+    - cron: '7 6,10,15 * * *'
+    - cron: '7 7,11,16 * * *'
+
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then echo run=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          H=$(TZ=Europe/Paris date +%H)
+          case "$H" in 08|12|17) echo run=true ;; *) echo run=false ;; esac >> "$GITHUB_OUTPUT"
+          echo "Paris hour: $H"
+
+  collect:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run collect
+        env:
+          CRUX_API_KEY: ${{ secrets.CRUX_API_KEY }}
+          SPEEDCURVE_API_KEY: ${{ secrets.SPEEDCURVE_API_KEY }}
+      - name: Commit metrics.sqlite
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add metrics.sqlite
+          git commit -m "collect $(date -u +%FT%H:%MZ)" || exit 0
+          git push
+      - run: npm run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deploy
+        uses: actions/deploy-pages@v4
