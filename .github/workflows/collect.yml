@@ -24,9 +24,11 @@ jobs:
       - id: check
         run: |
           if [ "${{ github.event_name }}" != "schedule" ]; then echo run=true >> "$GITHUB_OUTPUT"; exit 0; fi
-          H=$(TZ=Europe/Paris date +%H)
-          case "$H" in 08|12|17) echo run=true ;; *) echo run=false ;; esac >> "$GITHUB_OUTPUT"
-          echo "Paris hour: $H"
+          # GitHub retarde les crons de 30 min à 3 h : on ne regarde pas l'heure réelle mais
+          # quel cron a déclenché le run, et si c'est celui de l'offset Paris courant (+0200 été, +0100 hiver).
+          case "$(TZ=Europe/Paris date +%z)" in +0200) WANT='7 6,10,15 * * *' ;; *) WANT='7 7,11,16 * * *' ;; esac
+          if [ "${{ github.event.schedule }}" = "$WANT" ]; then echo run=true; else echo run=false; fi >> "$GITHUB_OUTPUT"
+          echo "cron: ${{ github.event.schedule }} / attendu: $WANT"
 
   collect:
     needs: gate
