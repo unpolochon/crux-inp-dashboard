@@ -13,6 +13,7 @@
     { "id": "foot", "label": "Rubrique Foot", "url": "https://www.leparisien.fr/sports/football/", "formFactors": ["PHONE"] },
     { "id": "politique", "label": "Rubrique Politique", "url": "https://www.leparisien.fr/politique/", "formFactors": ["PHONE"] },
     { "id": "faits-divers", "label": "Rubrique Faits divers", "url": "https://www.leparisien.fr/faits-divers/", "formFactors": ["PHONE"] },
+    { "id": "societe", "label": "Rubrique Société", "url": "https://www.leparisien.fr/societe/", "formFactors": ["PHONE"] },
     { "id": "etudiant", "label": "Étudiant — page rubrique", "url": "https://www.leparisien.fr/etudiant/", "formFactors": ["PHONE"] },
     { "id": "jardin", "label": "Jardin — page rubrique", "url": "https://www.leparisien.fr/jardin/", "formFactors": ["PHONE"] },
     { "id": "environnement", "label": "Rubrique Environnement", "url": "https://www.leparisien.fr/environnement/", "formFactors": ["PHONE"] }
@@ -24,6 +25,7 @@
     { "id": "foot", "label": "Foot", "prefix": "/sports/football/" },
     { "id": "politique", "label": "Politique", "prefix": "/politique/" },
     { "id": "faits-divers", "label": "Faits divers", "prefix": "/faits-divers/" },
+    { "id": "societe", "label": "Société", "prefix": "/societe/" },
     { "id": "etudiant", "label": "Étudiant", "prefix": "/etudiant/" },
     { "id": "jardin", "label": "Jardin", "prefix": "/jardin/" },
     { "id": "environnement", "label": "Environnement", "prefix": "/environnement/" }

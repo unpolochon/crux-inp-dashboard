@@ -96,19 +96,22 @@ export function RatingLegend() {
   );
 }
 
-/** Section avec, dans le titre, un badge par source de données (`source` : texte ou liste, ex. CrUX, SpeedCurve RUM…). */
-export function Section({ title, source, hint, children }) {
+/** Ligne de provenance au-dessus d'un bloc : un badge par source (texte ou liste), puis un texte optionnel. */
+export function SourceLine({ source, className = '', children }) {
+  return (
+    <p className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground ${className}`}>
+      {[].concat(source).map((s) => (
+        <Badge key={s} variant="secondary" className="text-[10px] font-medium">{s}</Badge>
+      ))}
+      {children && <span>{children}</span>}
+    </p>
+  );
+}
+
+export function Section({ title, children }) {
   return (
     <section className="space-y-3">
-      <div className="space-y-1">
-        <h2 className="flex flex-wrap items-center gap-x-2 gap-y-1 text-base font-semibold tracking-tight">
-          {title}
-          {[].concat(source ?? []).map((s) => (
-            <Badge key={s} variant="secondary" className="text-[10px] font-medium">{s}</Badge>
-          ))}
-        </h2>
-        {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-      </div>
+      <h2 className="text-base font-semibold tracking-tight">{title}</h2>
       {children}
     </section>
   );
