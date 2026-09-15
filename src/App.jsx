@@ -38,6 +38,7 @@ const withToday = (history, current, today) => {
 };
 
 const CRUX_HINT = 'Relevés hebdomadaires CrUX, fenêtre glissante de 28 jours.';
+const COVERAGE_HINT = 'n = articles avec un INP CrUX / articles trouvés dans les flux (J-2, ou ~3 semaines pour les rubriques peu actives). CrUX ne publie que les URL assez visitées.';
 const GROUP_HINT = 'Un relevé par collecte : p75 des articles J-2 du jour. Les jours antérieurs sont reconstruits depuis l’API CrUX : p75 actuel des articles publiés ce jour-là (fenêtre 28 j, pas seulement leurs 2 premiers jours).';
 const SCRIPT_HINT = 'Un point par jour de test synthétique (run médian). CPU main thread en ms à gauche, poids transféré en Ko à droite.';
 
@@ -53,6 +54,8 @@ export default function App({ data: d }) {
   const key = INP.key;
   const origin = d.origins.PHONE?.[key];
   const rumWindow = d.rumDates?.length ? d.rumDates.map(rumDayFR).join(' + ') : '';
+  // Badges de source : le profil d'appareil RUM (cfg.rum.device) est un badge a part, pour passer a la ligne sur mobile.
+  const RUM = d.rumDevice ? ['SpeedCurve RUM', d.rumDevice] : ['SpeedCurve RUM'];
   const today = d.collectedAt.slice(0, 10);
   const series = withToday(d.history.PHONE?.[key], origin, today);
 
@@ -71,14 +74,14 @@ export default function App({ data: d }) {
         <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">INP mobile — www.leparisien.fr</h1>
         <p className="text-xs text-muted-foreground">
           Collecte {new Date(d.collectedAt).toLocaleString('fr-FR')} · articles J-2 du {d.articlesDate} ·
-          CrUX API (p75 sur 28 jours){d.rumDates?.length > 0 && ` + SpeedCurve RUM (${rumWindow})`}
+          CrUX API (p75 sur 28 jours){d.rumDates?.length > 0 && ` + ${RUM.join(' · ')} (${rumWindow})`}
         </p>
         <p className="pt-1 text-xs text-muted-foreground">
           Interaction to Next Paint — réactivité perçue. ≤ 200 ms bon · ≤ 500 ms à améliorer · &gt; 500 ms mauvais.
         </p>
       </header>
 
-      <Section title="Vue globale — mesure CrUX directe par page">
+      <Section title="Vue globale — mesure directe par page" source="CrUX">
         <CardGrid>
           <StatCard
             label="INP global mobile (origine)" value={origin?.p75} note="pas de données CrUX"
@@ -96,13 +99,13 @@ export default function App({ data: d }) {
         </CardGrid>
       </Section>
 
-      <Section title="Vue p75 — agrégat des articles par rubrique">
+      <Section title="Vue p75 — agrégat des articles par rubrique" source="CrUX" hint={COVERAGE_HINT}>
         <CardGrid>
           {d.articleGroups.map((g) => (
             <StatCard
               key={g.id}
               label={g.id === 'all' ? 'INP p75 articles J-2' : `Articles ${g.label} — p75`}
-              sample={num(g.metrics[key]?.samples ?? 0)}
+              sample={`${num(g.metrics[key]?.samples)}/${num(g.queried)}`}
               value={g.metrics[key]?.p75}
               note="pas de données CrUX"
               onSelect={(e) => open(e, { title: `INP p75 — ${groupLabel(g)}`, hint: GROUP_HINT, chart: <InpChart series={g.history ?? []} /> })}
@@ -113,7 +116,8 @@ export default function App({ data: d }) {
 
       {d.rumDates?.length > 0 && (
         <Section
-          title={`Vue terrain SpeedCurve — INP p75 des pages vues réelles (${rumWindow})`}
+          title={`Vue terrain — INP p75 des pages vues réelles (${rumWindow})`}
+          source={RUM}
           hint={`n = pages vues avec un INP. En dessous de ${RUM_MIN_VIEWS} vues, la valeur reste indicative.`}
         >
           <p className="text-xs font-medium text-muted-foreground">Pages rubrique</p>
@@ -123,7 +127,7 @@ export default function App({ data: d }) {
         </Section>
       )}
 
-      <Section title="Distribution Bon / À améliorer / Mauvais — CrUX">
+      <Section title="Distribution Bon / À améliorer / Mauvais" source="CrUX">
         <Card>
           <CardContent className="space-y-1.5">
             <DistributionBar label="Origine mobile" dist={origin} />
@@ -140,7 +144,7 @@ export default function App({ data: d }) {
       </Section>
 
       {d.rumDates?.length > 0 && (
-        <Section title={`Distribution Bon / À améliorer / Mauvais — terrain SpeedCurve (${rumWindow})`}>
+        <Section title={`Distribution Bon / À améliorer / Mauvais — terrain (${rumWindow})`} source={RUM}>
           <Card>
             <CardContent className="space-y-1.5">
               {d.pages.map((p) => rumDist(p.label, p.rum))}
@@ -154,7 +158,8 @@ export default function App({ data: d }) {
 
       {d.rumElements?.length > 0 && (
         <Section
-          title={`Éléments les plus attribués à l’INP — terrain SpeedCurve (${rumWindow})`}
+          title={`Éléments les plus attribués à l’INP (${rumWindow})`}
+          source={RUM}
           hint="Sélecteur de l’élément interagi, toutes pages confondues. Trié par nombre d’interactions au-dessus du seuil « bon » (200 ms)."
         >
           <TopElementsTable elements={d.rumElements} />
@@ -163,7 +168,8 @@ export default function App({ data: d }) {
 
       {d.scripts?.length > 0 && (
         <Section
-          title="Scripts tiers — poids et CPU par domaine (SpeedCurve synthétique, mobile)"
+          title="Scripts tiers — poids et CPU par domaine (mobile)"
+          source="SpeedCurve synthétique"
           hint="Un test synthétique par jour (Mobile Medium), run médian. CPU = temps main thread des requêtes du domaine (évaluation, compilation, exécution JS) : il bloque les interactions et pèse sur l’INP, sans qu’une attribution INP par script soit possible. Cliquer un domaine pour son historique."
         >
           {d.scripts.map((page) => (
@@ -182,7 +188,7 @@ export default function App({ data: d }) {
         </Section>
       )}
 
-      <Section title="Historique p75 — origine mobile" hint="Relevés hebdomadaires, fenêtre glissante de 28 jours.">
+      <Section title="Historique p75 — origine mobile" source="CrUX" hint="Relevés hebdomadaires, fenêtre glissante de 28 jours.">
         <Card>
           <CardContent>
             <InpChart series={series} />
@@ -192,7 +198,8 @@ export default function App({ data: d }) {
 
       <Section
         title="Articles — INP p75 par article"
-        hint={`${d.articles?.length ?? 0} articles avec données CrUX, les pires en tête.`}
+        source={d.rumDates?.length > 0 ? ['CrUX', ...RUM] : 'CrUX'}
+        hint={`${num(d.articles?.length)} articles avec un INP CrUX${d.articlesQueried ? ` sur ${num(d.articlesQueried)} interrogés` : ''}, les pires en tête.`}
       >
         <ArticlesTable articles={d.articles} />
       </Section>

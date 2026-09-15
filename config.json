@@ -5,7 +5,7 @@
   "feedUrl": "https://feeds.leparisien.fr/leparisien/rss",
   "articlesLagDays": 2,
   "articlesSampleSize": 80,
-  "rum": { "enabled": true },
+  "rum": { "enabled": true, "device": { "os": "Android", "browser": "Chrome Mobile", "memoryGb": 4 } },
   "pages": [
     { "id": "homepage", "label": "Homepage", "url": "https://www.leparisien.fr/", "formFactors": ["PHONE"] },
     { "id": "eco", "label": "Rubrique Éco", "url": "https://www.leparisien.fr/economie/", "formFactors": ["PHONE"] },

@@ -12,7 +12,9 @@ const API_SYNTHETIC = 'https://api.speedcurve.com/v1';
 const FALLBACK_INDEX = {
   page_id: 0,
   epoch: 2,
+  browser_and_version: 7,
   device_type: 55,
+  device_memory: 62,
   pathname: 67,
   interaction_to_next_paint: 68,
   inp_element_selector: 69,
@@ -20,6 +22,7 @@ const FALLBACK_INDEX = {
   inp_input_delay: 71,
   inp_processing_time: 72,
   inp_presentation_delay: 73,
+  operating_system: 82,
 };
 const REQUIRED = ['page_id', 'device_type', 'pathname', 'interaction_to_next_paint'];
 
@@ -69,6 +72,9 @@ function parseRow(cells, index, date) {
   return {
     id: `${date}:${pageId}`,
     device: cells[index.device_type],
+    os: cells[index.operating_system],
+    browser: cells[index.browser_and_version]?.replace(/ [\d.]+$/, ''), // "Chrome Mobile 128" -> "Chrome Mobile"
+    memory: number(cells[index.device_memory]), // navigator.deviceMemory en Go (puissance de 2, absent sur iOS)
     pathname,
     epoch: number(cells[index.epoch]) ?? 0,
     inp,
@@ -80,15 +86,25 @@ function parseRow(cells, index, date) {
   };
 }
 
-// Garde la derniere mise a jour INP de chaque page vue. Les interactions envoyees
-// apres le beacon principal reutilisent le meme page_id.
+// Profil d'appareil (cfg.rum.device) : egalites exactes, chaque champ est optionnel.
+// L'API d'export ne filtre pas (seulement date/hour), tout se fait ici en lisant le fichier.
+export const matchesDevice = (row, device) =>
+  (device.os == null || row.os === device.os) &&
+  (device.browser == null || row.browser === device.browser) &&
+  (device.memoryGb == null || row.memory === device.memoryGb);
+
 function authHeaders() {
   const key = process.env.SPEEDCURVE_API_KEY;
   if (!key) throw new Error('SPEEDCURVE_API_KEY manquante');
   return { Authorization: `Basic ${Buffer.from(`${key}:`).toString('base64')}` };
 }
 
-export async function fetchRumDay(date, pathnames) {
+/**
+ * Pages vues mobile avec INP du jour, restreintes aux pathnames demandes et au profil d'appareil.
+ * Garde la derniere mise a jour INP de chaque page vue : les interactions envoyees apres le beacon
+ * principal reutilisent le meme page_id. Retourne aussi les comptes de lignes mobile / profil.
+ */
+export async function fetchRumDay(date, pathnames, device = null) {
   const endpoint = new URL(API);
   endpoint.searchParams.set('date', date);
   const exportResponse = await get(endpoint, { headers: authHeaders() }, 'SpeedCurve', 30_000);
@@ -104,7 +120,7 @@ export async function fetchRumDay(date, pathnames) {
   compressed.pipe(gunzip);
   const lines = createInterface({ input: gunzip, crlfDelay: Infinity });
   const views = new Map();
-  let index, withInp = 0, mobileRows = 0;
+  let index, withInp = 0, mobileRows = 0, deviceRows = 0;
 
   try {
     for await (const rawLine of lines) {
@@ -124,6 +140,8 @@ export async function fetchRumDay(date, pathnames) {
       withInp++;
       if (row.device !== DEVICE) continue;
       mobileRows++;
+      if (device && !matchesDevice(row, device)) continue;
+      deviceRows++;
       if (!pathnames.has(row.pathname)) continue;
       const previous = views.get(row.id);
       if (!previous || row.epoch > previous.epoch ||
@@ -140,7 +158,18 @@ export async function fetchRumDay(date, pathnames) {
     throw new Error(`Export RUM: 0 page vue ${DEVICE} sur ${withInp} avec INP ` +
       `(colonne device_type deplacee ? verifier l'index ${FALLBACK_INDEX.device_type})`);
   }
-  return [...views.values()];
+  if (device && mobileRows && !deviceRows) {
+    throw new Error(`Export RUM: 0 ligne mobile pour le profil ${JSON.stringify(device)} sur ${mobileRows} ` +
+      '(colonnes browser_and_version / device_memory / operating_system deplacees ?)');
+  }
+  return { views: [...views.values()], mobileRows, deviceRows };
+}
+
+{
+  const row = { os: 'Android', browser: 'Chrome Mobile', memory: 4 };
+  console.assert(matchesDevice(row, { os: 'Android', browser: 'Chrome Mobile', memoryGb: 4 }), 'device: profil complet');
+  console.assert(matchesDevice(row, { memoryGb: 4 }), 'device: champs optionnels');
+  console.assert(!matchesDevice(row, { os: 'iOS' }) && !matchesDevice({ ...row, memory: null }, { memoryGb: 4 }), 'device: mismatch et memoire absente');
 }
 
 // Seuils INP Core Web Vitals, fixes par spec : bon <= 200 ms, mauvais > 500 ms. Le RUM donne

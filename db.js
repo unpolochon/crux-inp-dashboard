@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS metrics (
     date    TEXT NOT NULL,   -- YYYY-MM-DD, jour de la collecte
-    source  TEXT NOT NULL,   -- 'crux' | 'rum'
+    source  TEXT NOT NULL,   -- 'crux' | 'rum' | 'rum:<profil appareil>' (cfg.rum.device)
     kind    TEXT NOT NULL,   -- 'origin' | 'page' | 'group'
     id      TEXT NOT NULL,   -- 'origin', cfg.pages[].id ou cfg.articleGroups[].id
     p75     REAL NOT NULL,

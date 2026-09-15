@@ -53,6 +53,7 @@ if (source === 'sitemap') {
 
 const articleGroups = [];
 const byUrl = new Map();
+const queriedUrls = new Set(); // toutes les URLs interrogees, pour afficher "N avec donnees CrUX sur M"
 for (const g of cfg.articleGroups) {
   // Les rubriques de niche publient peu : si rien à J-2, on élargit aux articles récents (~3 semaines).
   let scope = 'J-' + cfg.articlesLagDays;
@@ -65,8 +66,9 @@ for (const g of cfg.articleGroups) {
   // seules les rubriques de niche (élargies aux articles récents) sont plafonnées pour limiter les appels CrUX.
   if (g.id !== 'all') sample = sample.slice(0, cfg.articlesSampleSize);
   if (!sample.length) continue;
+  for (const u of sample) queriedUrls.add(u);
   const recs = (await pool(sample, 5, (u) => queryRecord({ url: u }, 'PHONE'))).filter(Boolean);
-  log(`   ${g.label} (${scope}): ${recs.length}/${sample.length} avec données CrUX`);
+  log(`   ${g.label} (${scope}): ${recs.filter((r) => r.metrics[METRIC]).length}/${sample.length} avec un INP CrUX`);
   if (recs.length) articleGroups.push({ ...g, date, scope, queried: sample.length, metrics: aggregate(recs) });
 
   // Détail par article pour le tableau : dédupliqué par URL (les rubriques recoupent "all").
@@ -92,6 +94,7 @@ log(`→ metrics.sqlite: ${articleGroups.length} groupes, ${articleGroups.find((
 
 const rumDates = [];
 let rumElements = [];
+let rumDevice = null;
 const rumEnabled = cfg.rum?.enabled !== false && !process.argv.includes('--no-rum');
 if (rumEnabled && process.env.SPEEDCURVE_API_KEY) {
   log('→ attribution INP SpeedCurve RUM…');
@@ -107,18 +110,28 @@ if (rumEnabled && process.env.SPEEDCURVE_API_KEY) {
   const pathnames = new Set([...articlePaths, ...sectionPaths]);
   const dateForLag = (lag) => new Date(Date.now() - lag * 864e5).toISOString().slice(0, 10).replaceAll('-', '');
   const lags = new Date().getUTCHours() >= 5 ? [2, 1] : [2];
+  // Profil d'appareil optionnel (cfg.rum.device : os, browser, memoryGb) : l'INP d'un Android 4 Go
+  // sous Chrome dit plus sur le lectorat que la moyenne de tout le mobile, iPhone recents compris.
+  const device = cfg.rum.device ?? null;
+  const deviceLabel = device && [device.os, device.browser, device.memoryGb != null && `${device.memoryGb} Go`]
+    .filter(Boolean).join(' · ');
   const records = [];
+  let mobileRows = 0, deviceRows = 0;
   for (const lag of lags) {
     const rumDate = dateForLag(lag);
     try {
-      const day = await fetchRumDay(rumDate, pathnames);
-      for (const view of day) records.push(view);
+      const day = await fetchRumDay(rumDate, pathnames, device);
+      for (const view of day.views) records.push(view);
+      mobileRows += day.mobileRows;
+      deviceRows += day.deviceRows;
       rumDates.push(rumDate);
-      log(`   ✓ ${rumDate}: ${day.length} pages vues mobile avec INP`);
+      log(`   ✓ ${rumDate}: ${day.views.length} pages vues mobile avec INP` +
+          (device ? ` (profil ${deviceLabel} : ${day.deviceRows}/${day.mobileRows} lignes mobile)` : ''));
     } catch (error) {
       log(`   ! ${rumDate}: ${error.message}`);
     }
   }
+  if (device && mobileRows) rumDevice = `${deviceLabel} (≈ ${Math.round((100 * deviceRows) / mobileRows)} % du mobile)`;
 
   const rumByPath = aggregateRum(records);
   const rumForPath = (pathname) =>
@@ -148,8 +161,10 @@ if (rumEnabled && process.env.SPEEDCURVE_API_KEY) {
   // Agrégats terrain en base, datés du jour de collecte (l'export couvre J-2 et J-1) : même
   // sémantique que les lignes CrUX, "ce que le dashboard affichait ce jour-là".
   // ponytail: seulement p75/good/ni/poor/n. Les phases et éléments (attribution) restent hors base.
+  // Un profil d'appareil change le sens des chiffres : sa série a sa propre clé source.
+  const rumSource = device ? `rum:${deviceLabel}` : 'rum';
   const rumRow = (kind, id, rum) =>
-    ({ date: today, source: 'rum', kind, id, p75: rum?.inpP75, good: rum?.good, ni: rum?.ni, poor: rum?.poor, samples: rum?.n });
+    ({ date: today, source: rumSource, kind, id, p75: rum?.inpP75, good: rum?.good, ni: rum?.ni, poor: rum?.poor, samples: rum?.n });
   db.upsert([
     ...pages.map((p) => rumRow('page', p.id, p.rum)),
     ...articleGroups.map((g) => rumRow('group', g.id, g.rum)),
@@ -237,7 +252,9 @@ writeFileSync(
       pages,
       articleGroups,
       articles,
+      articlesQueried: queriedUrls.size,
       rumDates,
+      rumDevice,
       rumElements,
       scripts,
     },

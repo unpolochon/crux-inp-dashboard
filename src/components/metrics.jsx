@@ -96,11 +96,17 @@ export function RatingLegend() {
   );
 }
 
-export function Section({ title, hint, children }) {
+/** Section avec, dans le titre, un badge par source de données (`source` : texte ou liste, ex. CrUX, SpeedCurve RUM…). */
+export function Section({ title, source, hint, children }) {
   return (
     <section className="space-y-3">
       <div className="space-y-1">
-        <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+        <h2 className="flex flex-wrap items-center gap-x-2 gap-y-1 text-base font-semibold tracking-tight">
+          {title}
+          {[].concat(source ?? []).map((s) => (
+            <Badge key={s} variant="secondary" className="text-[10px] font-medium">{s}</Badge>
+          ))}
+        </h2>
         {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       </div>
       {children}
