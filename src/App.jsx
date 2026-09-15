@@ -123,6 +123,18 @@ function Dashboard({ d, open, RUM, rumWindow, today }) {
 
   return (
     <>
+      <Section title="Origine mobile — INP p75 global">
+        <SourceLine source="CrUX">Toutes les pages du site sur mobile. {CRUX_HINT}</SourceLine>
+        <CardGrid>
+          <StatCard label="INP global mobile (origine)" value={origin?.p75} note="pas de données CrUX" />
+        </CardGrid>
+        <Card>
+          <CardContent>
+            <InpChart series={series} />
+          </CardContent>
+        </Card>
+      </Section>
+
       <Section title="Articles — INP p75 par rubrique">
         <SourceLine source="CrUX">{COVERAGE_HINT}</SourceLine>
         <CardGrid>
@@ -145,12 +157,8 @@ function Dashboard({ d, open, RUM, rumWindow, today }) {
       </Section>
 
       <Section title="Rubriques — INP p75 par page">
-        <SourceLine source="CrUX">Mesure directe de chaque page rubrique et de l’origine.</SourceLine>
+        <SourceLine source="CrUX">Mesure directe de chaque page rubrique.</SourceLine>
         <CardGrid>
-          <StatCard
-            label="INP global mobile (origine)" value={origin?.p75} note="pas de données CrUX"
-            onSelect={(e) => open(e, { title: 'INP p75 — Origine mobile', hint: CRUX_HINT, chart: <InpChart series={series} /> })}
-          />
           {d.pages.map((p) => (
             <StatCard
               key={p.id} label={`${p.label} — global mobile`} value={p.metrics?.[key]?.p75} note="pas de données CrUX"
@@ -166,15 +174,6 @@ function Dashboard({ d, open, RUM, rumWindow, today }) {
 
       <Section title="Rubriques — distribution Bon / À améliorer / Mauvais">
         <Distribution rows={pageRows} RUM={RUM} rumWindow={rumWindow} />
-      </Section>
-
-      <Section title="Historique p75 — origine mobile">
-        <SourceLine source="CrUX">{CRUX_HINT}</SourceLine>
-        <Card>
-          <CardContent>
-            <InpChart series={series} />
-          </CardContent>
-        </Card>
       </Section>
     </>
   );
