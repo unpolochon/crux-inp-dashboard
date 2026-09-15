@@ -27,5 +27,13 @@
     { "id": "etudiant", "label": "Étudiant", "prefix": "/etudiant/" },
     { "id": "jardin", "label": "Jardin", "prefix": "/jardin/" },
     { "id": "environnement", "label": "Environnement", "prefix": "/environnement/" }
-  ]
+  ],
+  "scripts": {
+    "browser": "Mobile Medium",
+    "days": 21,
+    "pages": [
+      { "id": "homepage", "label": "Homepage", "urlId": 3909230, "inp": { "kind": "page", "id": "homepage" } },
+      { "id": "article", "label": "Article", "urlId": 3910388, "inp": { "kind": "group", "id": "all" } }
+    ]
+  }
 }

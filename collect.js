@@ -1,13 +1,16 @@
 // Collecte CrUX -> data.json (utilisé par le dashboard).
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { queryRecord, queryHistory, fetchFeeds, pool } from './crux.js';
-import { fetchRumDay, aggregateRum } from './speedcurve.js';
+import { queryRecord, queryHistory, fetchArticles, fetchFeeds, pool } from './crux.js';
+import { fetchRumDay, aggregateRum, fetchSyntheticTests, fetchHarHosts } from './speedcurve.js';
 import { aggregate } from './stats.js';
 import { openDb } from './db.js';
 
 const cfg = JSON.parse(readFileSync(new URL('./config.json', import.meta.url)));
 const log = (...a) => console.log(...a);
 const METRIC = 'interaction_to_next_paint';
+// ARTICLES_SOURCE=sitemap|rss (défaut rss, seule source accessible depuis GitHub Actions).
+const source = process.env.ARTICLES_SOURCE ?? 'rss';
+if (!['sitemap', 'rss'].includes(source)) throw new Error(`ARTICLES_SOURCE=${source} : attendu sitemap ou rss`);
 
 log('→ origine (mobile)…');
 const [originPhone, historyPhone] = await Promise.all([
@@ -32,14 +35,21 @@ const pages = (
   })
 ).filter(Boolean);
 
-log(`→ articles J-${cfg.articlesLagDays}…`);
-// Les flux RSS ne remontent qu'aux 100 derniers articles : on accumule chaque passage dans
-// metrics.sqlite et on relit J-2 depuis la base.
+// ARTICLES_SOURCE (voir en tête) : le sitemap news est bloqué (403 Akamai) depuis GitHub
+// Actions mais reste la source la plus complète en local ; les flux RSS ne remontent qu'aux 100
+// derniers articles, d'où l'accumulation dans metrics.sqlite et la relecture de J-2 depuis la base.
+log(`→ articles J-${cfg.articlesLagDays} (${source})…`);
 const db = openDb();
-const feed = await fetchFeeds(cfg);
-db.addArticles(feed);
-const { date, urls, allUrls, meta } = db.articles(cfg.articlesLagDays);
-log(`   ${feed.length} articles dans les flux, ${urls.length} publiés le ${date} (${allUrls.length} récents en base)`);
+let date, urls, allUrls, meta;
+if (source === 'sitemap') {
+  ({ date, urls, allUrls, meta } = await fetchArticles(cfg, cfg.articlesLagDays));
+  log(`   ${urls.length} articles publiés le ${date} (${allUrls.length} dans le sitemap)`);
+} else {
+  const feed = await fetchFeeds(cfg);
+  db.addArticles(feed);
+  ({ date, urls, allUrls, meta } = db.articles(cfg.articlesLagDays));
+  log(`   ${feed.length} articles dans les flux, ${urls.length} publiés le ${date} (${allUrls.length} récents en base)`);
+}
 
 const articleGroups = [];
 const byUrl = new Map();
@@ -163,6 +173,57 @@ if (rumEnabled && process.env.SPEEDCURVE_API_KEY) {
   log(`→ attribution INP SpeedCurve ignorée (${rumEnabled ? 'clé absente' : 'désactivée'})`);
 }
 
+// Scripts tiers : poids et CPU par domaine, depuis le HAR du run médian des tests synthétiques
+// SpeedCurve (un test mobile par jour et par page suivie). Seuls les jours absents de la base sont
+// téléchargés : le premier passage remonte cfg.scripts.days jours, les suivants un HAR par page.
+// ponytail: agrégation par domaine, pas par URL de script (les URLs portent des cache-busters) ;
+// pas d'attribution INP par script, la donnée n'existe pas hors UI SpeedCurve (cf. PLAN-inp-attribution.md).
+const scripts = [];
+if (cfg.scripts && process.env.SPEEDCURVE_API_KEY && !process.argv.includes('--no-scripts')) {
+  const { days, browser } = cfg.scripts;
+  log(`→ scripts tiers SpeedCurve synthétique (${browser}, ${days} j)…`);
+  const firstParty = new URL(cfg.origin).hostname.split('.').slice(-2).join('.');
+  for (const page of cfg.scripts.pages) {
+    let url = null;
+    try {
+      const synthetic = await fetchSyntheticTests(page.urlId, days, browser);
+      url = synthetic.url;
+      const known = db.scriptDays(page.id);
+      const missing = synthetic.tests.filter((test) => !known.has(test.day));
+      await pool(missing, 3, async (test) => {
+        try {
+          db.addScripts(page.id, test.day, await fetchHarHosts(test), days);
+        } catch (error) {
+          log(`   ! ${page.label} ${test.day}: ${error.message}`);
+        }
+      });
+      log(`   ${page.label}: ${synthetic.tests.length} tests, ${missing.length} HAR téléchargés`);
+    } catch (error) {
+      log(`   ! ${page.label}: ${error.message}`);
+    }
+    const rows = db.scripts(page.id, days);
+    if (!rows.length) continue;
+    const dates = [...new Set(rows.map((r) => r.date))];
+    const byHost = new Map();
+    for (const { host, ...point } of rows) (byHost.get(host) ?? byHost.set(host, []).get(host)).push(point);
+    const inpSource = page.inp.kind === 'page'
+      ? pages.find((p) => p.id === page.inp.id)
+      : articleGroups.find((g) => g.id === page.inp.id);
+    scripts.push({
+      id: page.id, label: page.label, url, browser, dates,
+      inp: { crux: inpSource?.metrics?.[METRIC]?.p75 ?? null, rum: inpSource?.rum?.inpP75 ?? null },
+      // Seuls les domaines vus au dernier test sont listés (les gagnants d'enchères pub varient) ;
+      // leur historique couvre tous les jours où ils apparaissent.
+      hosts: [...byHost]
+        .map(([host, series]) => ({ host, firstParty: host.endsWith(firstParty), series }))
+        .filter((h) => h.series.at(-1).date === dates.at(-1))
+        .sort((a, b) => b.series.at(-1).cpu - a.series.at(-1).cpu || b.series.at(-1).bytes - a.series.at(-1).bytes),
+    });
+  }
+} else {
+  log('→ scripts tiers SpeedCurve ignorés');
+}
+
 mkdirSync(new URL('./public/', import.meta.url), { recursive: true }); // public/ ne contient que data.json, non versionné
 writeFileSync(
   new URL('./public/data.json', import.meta.url),
@@ -178,6 +239,7 @@ writeFileSync(
       articles,
       rumDates,
       rumElements,
+      scripts,
     },
     null,
     2

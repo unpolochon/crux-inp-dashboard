@@ -19,6 +19,15 @@ const SCHEMA = `
     title     TEXT NOT NULL,
     published TEXT,            -- YYYY-MM-DD depuis l'URL, NULL si l'URL n'est pas datée
     seen      TEXT NOT NULL    -- YYYY-MM-DD, première apparition dans un flux RSS
+  ) STRICT;
+  CREATE TABLE IF NOT EXISTS scripts (
+    date     TEXT NOT NULL,    -- YYYY-MM-DD, jour du test synthétique SpeedCurve
+    page     TEXT NOT NULL,    -- cfg.scripts.pages[].id
+    host     TEXT NOT NULL,    -- domaine des requêtes
+    requests INTEGER NOT NULL,
+    bytes    INTEGER NOT NULL, -- octets transférés
+    cpu      INTEGER NOT NULL, -- ms main thread (évaluation + compilation + exécution JS)
+    PRIMARY KEY (date, page, host)
   ) STRICT`;
 
 // Fenêtre "récent" pour les rubriques de niche, comme l'ancien sitemap news (~3 semaines).
@@ -41,6 +50,10 @@ export function openDb(path = new URL('./metrics.sqlite', import.meta.url).pathn
   // ponytail: purge à 30 j pour garder metrics.sqlite (versionné 3x/jour) petit. Étendre si un
   // historique par article devient utile.
   const purge = db.prepare('DELETE FROM articles WHERE seen < ?');
+  const addScript = db.prepare('INSERT OR REPLACE INTO scripts (date, page, host, requests, bytes, cpu) VALUES (?, ?, ?, ?, ?, ?)');
+  const scriptDays = db.prepare('SELECT DISTINCT date FROM scripts WHERE page = ?');
+  const scriptRows = db.prepare('SELECT date, host, requests, bytes, cpu FROM scripts WHERE page = ? AND date >= ? ORDER BY date, host');
+  const purgeScripts = db.prepare('DELETE FROM scripts WHERE date < ?');
   const isoDaysAgo = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
   const write = (stmt, rows) => {
     db.exec('BEGIN');
@@ -80,6 +93,17 @@ export function openDb(path = new URL('./metrics.sqlite', import.meta.url).pathn
         meta: new Map(rows.map((r) => [r.url, { title: r.title, published: r.published }])),
       };
     },
+    /** Jours déjà en base pour une page : évite de retélécharger les HAR. */
+    scriptDays: (page) => new Set(scriptDays.all(page).map((r) => r.date)),
+    /** Domaines d'un test (jour, page) ; l'historique est borné à `keepDays` jours. */
+    addScripts: (page, date, hosts, keepDays) => {
+      db.exec('BEGIN');
+      for (const h of hosts) addScript.run(date, page, h.host, h.requests, h.bytes, h.cpu);
+      purgeScripts.run(isoDaysAgo(keepDays));
+      db.exec('COMMIT');
+    },
+    /** Lignes (date, host, requests, bytes, cpu) d'une page sur `days` jours, ordre chronologique. */
+    scripts: (page, days) => scriptRows.all(page, isoDaysAgo(days)).map((r) => ({ ...r })),
   };
 }
 
@@ -108,4 +132,16 @@ console.assert(t.series('rum', 'group', 'all').length === 0, 'db: clé source di
   console.assert(a.allUrls.length === 2 && a.meta.get(dated).title === 'A', 'articles: INSERT OR IGNORE, meta');
   console.assert(a.urls.length === 1 && a.urls[0] === dated, 'articles: J-2 = publié ce jour-là');
   console.assert(a.meta.get('https://x.fr/jardin/b.php').published === null, 'articles: sans date -> récent uniquement');
+}
+
+{
+  const day = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
+  t.addScripts('hp', day(3), [{ host: 'a.com', requests: 2, bytes: 150, cpu: 15 }, { host: 'b.com', requests: 1, bytes: 7, cpu: 0 }], 21);
+  t.addScripts('hp', day(1), [{ host: 'a.com', requests: 1, bytes: 10, cpu: 1 }], 21);
+  t.addScripts('hp', day(40), [{ host: 'old.com', requests: 1, bytes: 1, cpu: 1 }], 21);
+  const days = t.scriptDays('hp');
+  console.assert(days.size === 2 && days.has(day(3)) && !days.has(day(40)), 'scripts: jours en base, purge au-delà de keepDays');
+  const rows = t.scripts('hp', 21);
+  console.assert(rows.length === 3 && rows[0].date === day(3) && rows[0].host === 'a.com' && rows.at(-1).cpu === 1, 'scripts: ordre date puis host');
+  console.assert(t.scripts('autre', 21).length === 0, 'scripts: clé page distincte');
 }

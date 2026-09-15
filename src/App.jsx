@@ -5,7 +5,8 @@ import { Separator } from '@/components/ui/separator';
 import { CardGrid, DistributionBar, RatingLegend, Section, StatCard } from '@/components/metrics';
 import { ArticlesTable, TopElementsTable } from '@/components/articles-table';
 import { InpChart } from '@/components/inp-chart';
-import { INP, num, rumDayFR } from '@/lib/inp';
+import { ScriptChart, ScriptsTable } from '@/components/scripts-table';
+import { INP, RATING_TEXT, dayFR, ms, num, rate, rumDayFR } from '@/lib/inp';
 
 // Sous ce seuil un p75 n'est pas stable : on montre la valeur en note plutot qu'en carte
 // coloree, sinon 99 ms sur 6 pages vues se lit comme un bon score.
@@ -38,6 +39,15 @@ const withToday = (history, current, today) => {
 
 const CRUX_HINT = 'Relevés hebdomadaires CrUX, fenêtre glissante de 28 jours.';
 const GROUP_HINT = 'Un relevé par collecte : p75 des articles J-2 du jour. Les jours antérieurs sont reconstruits depuis l’API CrUX : p75 actuel des articles publiés ce jour-là (fenêtre 28 j, pas seulement leurs 2 premiers jours).';
+const SCRIPT_HINT = 'Un point par jour de test synthétique (run médian). CPU main thread en ms à gauche, poids transféré en Ko à droite.';
+
+// INP p75 de la page suivie, colore par sa note, pour lire le CPU tiers en regard de la reactivite.
+const inpNote = (label, value) =>
+  value != null && (
+    <span>
+      {' · '}{label} <strong className={`font-semibold ${RATING_TEXT[rate(value)]}`}>{ms(value)} ms</strong>
+    </span>
+  );
 
 export default function App({ data: d }) {
   const key = INP.key;
@@ -46,7 +56,7 @@ export default function App({ data: d }) {
   const today = d.collectedAt.slice(0, 10);
   const series = withToday(d.history.PHONE?.[key], origin, today);
 
-  // Historique ouvert au clic sur une carte CrUX : { title, hint, series } ou null.
+  // Historique ouvert au clic sur une carte ou une ligne : { title, hint, chart } ou null.
   const [selected, setSelected] = useState(null);
   // Sans DialogTrigger, Radix ne sait pas ou rendre le focus a la fermeture : on garde la carte cliquee.
   const triggerRef = useRef(null);
@@ -72,13 +82,14 @@ export default function App({ data: d }) {
         <CardGrid>
           <StatCard
             label="INP global mobile (origine)" value={origin?.p75} note="pas de données CrUX"
-            onSelect={(e) => open(e, { title: 'Origine mobile', hint: CRUX_HINT, series })}
+            onSelect={(e) => open(e, { title: 'INP p75 — Origine mobile', hint: CRUX_HINT, chart: <InpChart series={series} /> })}
           />
           {d.pages.map((p) => (
             <StatCard
               key={p.id} label={`${p.label} — global mobile`} value={p.metrics?.[key]?.p75} note="pas de données CrUX"
               onSelect={(e) => open(e, {
-                title: p.label, hint: CRUX_HINT, series: withToday(p.history, p.metrics?.[key], today),
+                title: `INP p75 — ${p.label}`, hint: CRUX_HINT,
+                chart: <InpChart series={withToday(p.history, p.metrics?.[key], today)} />,
               })}
             />
           ))}
@@ -94,7 +105,7 @@ export default function App({ data: d }) {
               sample={num(g.metrics[key]?.samples ?? 0)}
               value={g.metrics[key]?.p75}
               note="pas de données CrUX"
-              onSelect={(e) => open(e, { title: `${groupLabel(g)} — p75`, hint: GROUP_HINT, series: g.history ?? [] })}
+              onSelect={(e) => open(e, { title: `INP p75 — ${groupLabel(g)}`, hint: GROUP_HINT, chart: <InpChart series={g.history ?? []} /> })}
             />
           ))}
         </CardGrid>
@@ -150,6 +161,27 @@ export default function App({ data: d }) {
         </Section>
       )}
 
+      {d.scripts?.length > 0 && (
+        <Section
+          title="Scripts tiers — poids et CPU par domaine (SpeedCurve synthétique, mobile)"
+          hint="Un test synthétique par jour (Mobile Medium), run médian. CPU = temps main thread des requêtes du domaine (évaluation, compilation, exécution JS) : il bloque les interactions et pèse sur l’INP, sans qu’une attribution INP par script soit possible. Cliquer un domaine pour son historique."
+        >
+          {d.scripts.map((page) => (
+            <div key={page.id} className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">
+                {page.label} · test du {dayFR(page.dates.at(-1))} · {page.dates.length} jours d’historique
+                {inpNote('INP p75 CrUX', page.inp.crux)}
+                {inpNote('terrain', page.inp.rum)}
+              </p>
+              <ScriptsTable
+                page={page}
+                onSelect={(e, h) => open(e, { title: `${h.host} — ${page.label}`, hint: SCRIPT_HINT, chart: <ScriptChart series={h.series} /> })}
+              />
+            </div>
+          ))}
+        </Section>
+      )}
+
       <Section title="Historique p75 — origine mobile" hint="Relevés hebdomadaires, fenêtre glissante de 28 jours.">
         <Card>
           <CardContent>
@@ -173,10 +205,10 @@ export default function App({ data: d }) {
           onCloseAutoFocus={(e) => { e.preventDefault(); triggerRef.current?.focus(); }}
         >
           <DialogHeader>
-            <DialogTitle>Historique INP p75 — {selected?.title}</DialogTitle>
+            <DialogTitle>Historique — {selected?.title}</DialogTitle>
             <DialogDescription>{selected?.hint}</DialogDescription>
           </DialogHeader>
-          {selected && <InpChart series={selected.series} />}
+          {selected?.chart}
         </DialogContent>
       </Dialog>
     </div>

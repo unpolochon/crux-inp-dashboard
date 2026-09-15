@@ -5,6 +5,7 @@ import { createGunzip } from 'node:zlib';
 import { percentile } from './stats.js';
 
 const API = 'https://api.speedcurve.com/v1/lux/export';
+const API_SYNTHETIC = 'https://api.speedcurve.com/v1';
 
 // L'export n'a pas de ligne d'en-tete. SpeedCurve garantit que l'ordre ne change pas,
 // mais peut ajouter des colonnes. Les index sont ceux du schema public a 85 colonnes.
@@ -81,19 +82,16 @@ function parseRow(cells, index, date) {
 
 // Garde la derniere mise a jour INP de chaque page vue. Les interactions envoyees
 // apres le beacon principal reutilisent le meme page_id.
-export async function fetchRumDay(date, pathnames) {
+function authHeaders() {
   const key = process.env.SPEEDCURVE_API_KEY;
   if (!key) throw new Error('SPEEDCURVE_API_KEY manquante');
+  return { Authorization: `Basic ${Buffer.from(`${key}:`).toString('base64')}` };
+}
 
+export async function fetchRumDay(date, pathnames) {
   const endpoint = new URL(API);
   endpoint.searchParams.set('date', date);
-  const auth = Buffer.from(`${key}:`).toString('base64');
-  const exportResponse = await get(
-    endpoint,
-    { headers: { Authorization: `Basic ${auth}` } },
-    'SpeedCurve',
-    30_000
-  );
+  const exportResponse = await get(endpoint, { headers: authHeaders() }, 'SpeedCurve', 30_000);
   const payload = await exportResponse.json();
   if (!payload.download_url) throw new Error('SpeedCurve: download_url absente');
 
@@ -201,3 +199,54 @@ console.assert(fixture.phases.processing === 35, 'RUM: mediane des phases');
 console.assert(fixture.elements[0].selector === '#menu' && fixture.elements[0].n === 3, 'RUM: top elements');
 console.assert(fixture.good === 0.5 && fixture.ni === 0.5 && fixture.poor === 0, 'RUM: densites good/ni/poor');
 console.assert(aggregateRum(fixtureViews, () => 'grp').get('grp').n === 4, 'RUM: cle de regroupement');
+
+// --- Synthetique : poids et CPU par domaine, depuis le HAR du run median d'un test quotidien.
+// L'API /v1/tests ne donne que les totaux first/third party ; le detail par domaine n'existe que
+// dans le HAR WebPageTest, ou chaque requete porte _cpuTimes (EvaluateScript, v8.compile, FunctionCall).
+
+/** Tests d'une URL SpeedCurve sur `days` jours : un par jour (le plus recent) pour le navigateur demande. */
+export async function fetchSyntheticTests(urlId, days, browser) {
+  const response = await get(`${API_SYNTHETIC}/urls/${urlId}?days=${days}`, { headers: authHeaders() }, 'SpeedCurve', 30_000);
+  const { url, tests } = await response.json();
+  const byDay = new Map();
+  for (const test of tests) {
+    if (test.browser !== browser || !test.har) continue;
+    if (!byDay.has(test.day) || test.timestamp > byDay.get(test.day).timestamp) byDay.set(test.day, test);
+  }
+  return { url, tests: [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day)) };
+}
+
+/** Agrege les requetes d'un run par domaine : requetes, octets transferes, CPU main thread (ms). */
+export function hostsFromHar(har, run) {
+  const byHost = new Map();
+  for (const entry of har.log.entries) {
+    if (entry._run !== run) continue;
+    const host = entry._host || '(sans hôte)';
+    const agg = byHost.get(host) ?? byHost.set(host, { host, requests: 0, bytes: 0, cpu: 0 }).get(host);
+    agg.requests++;
+    agg.bytes += entry._bytesIn ?? 0;
+    for (const ms of Object.values(entry._cpuTimes ?? {})) agg.cpu += ms;
+  }
+  return [...byHost.values()].map((agg) => ({ ...agg, cpu: Math.round(agg.cpu) }));
+}
+
+/** Telecharge le HAR d'un test (~5 Mo, sans authentification) et l'agrege par domaine. */
+export async function fetchHarHosts(test) {
+  const response = await get(test.har, {}, 'HAR', 120_000);
+  const hosts = hostsFromHar(await response.json(), test.run);
+  if (!hosts.length) throw new Error(`HAR ${test.test_id}: aucune requête pour le run ${test.run}`);
+  return hosts;
+}
+
+{
+  const har = { log: { entries: [
+    { _run: 1, _host: 'a.com', _bytesIn: 100, _cpuTimes: { EvaluateScript: 10, FunctionCall: 5.4 } },
+    { _run: 1, _host: 'a.com', _bytesIn: 50 },
+    { _run: 2, _host: 'a.com', _bytesIn: 999, _cpuTimes: { EvaluateScript: 999 } },
+    { _run: 1, _host: 'b.com', _bytesIn: 7, _cpuTimes: {} },
+  ] } };
+  const hosts = hostsFromHar(har, 1);
+  const a = hosts.find((h) => h.host === 'a.com');
+  console.assert(hosts.length === 2 && a.requests === 2 && a.bytes === 150 && a.cpu === 15, 'HAR: agregation par domaine du seul run demande');
+  console.assert(hosts.find((h) => h.host === 'b.com').cpu === 0, 'HAR: requete sans CPU');
+}
