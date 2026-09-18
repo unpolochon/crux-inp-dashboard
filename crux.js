@@ -40,8 +40,9 @@ async function post(endpoint, body, attempt = 0) {
   if (j.error) {
     // 404 = pas assez de trafic pour cette URL, cas normal et fréquent.
     if (j.error.code === 404) return null;
-    // 429 = quota 150 req/min dépassé (plan gratuit) ; on retente après une pause plutôt que d'échouer la collecte.
-    if (j.error.code === 429 && attempt < 5) {
+    // 429 = quota dépassé, 503 = panne ponctuelle côté Google ; on retente après une pause
+    // plutôt que d'échouer toute la collecte (et donc de bloquer le déploiement du site).
+    if ((j.error.code === 429 || j.error.code === 503) && attempt < 5) {
       await new Promise((res) => setTimeout(res, 12000));
       return post(endpoint, body, attempt + 1);
     }
